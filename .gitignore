@@ -1,0 +1,9 @@
+node_modules/
+output.mp4
+output.webm
+storyboard/frames/
+assets/audio/*.mp3
+assets/audio/*.wav
+*.log
+.DS_Store
+Thumbs.db

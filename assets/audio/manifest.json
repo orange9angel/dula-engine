@@ -1,0 +1,36 @@
+{
+  "entries": [
+    {
+      "index": 1,
+      "startTime": 1.0,
+      "endTime": 3.5,
+      "character": "Doraemon",
+      "dialogue": "大雄，快起床啦！",
+      "file": "assets/audio/001_Doraemon.mp3"
+    },
+    {
+      "index": 2,
+      "startTime": 3.5,
+      "endTime": 6.0,
+      "character": "Nobita",
+      "dialogue": "再让我睡五分钟嘛。",
+      "file": "assets/audio/002_Nobita.mp3"
+    },
+    {
+      "index": 3,
+      "startTime": 6.5,
+      "endTime": 9.0,
+      "character": "Doraemon",
+      "dialogue": "不行哦，今天有考试！",
+      "file": "assets/audio/003_Doraemon.mp3"
+    },
+    {
+      "index": 4,
+      "startTime": 9.5,
+      "endTime": 12.0,
+      "character": "Nobita",
+      "dialogue": "啊？完蛋了！",
+      "file": "assets/audio/004_Nobita.mp3"
+    }
+  ]
+}
