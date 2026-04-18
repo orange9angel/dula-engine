@@ -117,17 +117,63 @@ D:\opensource\movie\doula
   - `endTime`：音乐结束时间（可跨多个 SRT 条目持续播放）。
   - `emotion` / `bpm`：情绪标签与速度（供 MusicDirector 智能选曲使用）。
 
-### 动作标签清单（已注册在 `animations/common/`）
+### 通用动作标签（`animations/common/`，所有角色可用）
 | 标签 | 动画类 | 效果 |
 |------|--------|------|
 | `{Walk}` | `Walk` | 走路（腿部摆动） |
+| `{Run}` | `Run` | 跑步（身体前倾，幅度更大） |
 | `{WaveHand}` | `WaveHand` | 挥手 |
 | `{Jump}` | `Jump` | 跳跃 |
 | `{StompFoot}` | `StompFoot` | 跺脚 |
 | `{SwayBody}` | `SwayBody` | 身体摇摆 |
 | `{Nod}` | `Nod` | 点头 |
+| `{ShakeHead}` | `ShakeHead` | 摇头（否认/困惑） |
 | `{TurnToCamera}` | `TurnToCamera` | 转身面向镜头（由 Storyboard 自动调度） |
-| `{SwingRacket}` | `SwingRacket` | 挥拍（拉拍→击球→随挥，0.6s） |
+| `{SwingRacket}` | `SwingRacket` | 挥拍（拉拍→击球→随挥，0.8s） |
+| `{Bow}` | `Bow` | 鞠躬 |
+| `{LookAround}` | `LookAround` | 左顾右盼 |
+| `{PointForward}` | `PointForward` | 指向前方 |
+| `{ScratchHead}` | `ScratchHead` | 挠头（困惑） |
+| `{HandsOnHips}` | `HandsOnHips` | 双手叉腰 |
+| `{ClapHands}` | `ClapHands` | 拍手 |
+| `{Celebrate}` | `Celebrate` | 欢呼（举手弹跳） |
+| `{Shrug}` | `Shrug` | 耸肩 |
+| `{SurprisedJump}` | `SurprisedJump` | 受惊跳起 |
+| `{Tremble}` | `Tremble` | 发抖/哆嗦 |
+| `{Think}` | `Think` | 思考（手托下巴） |
+| `{SitDown}` | `SitDown` | 坐下 |
+| `{CrossArms}` | `CrossArms` | 双臂交叉胸前 |
+
+### 哆啦A梦专属动作（`animations/doraemon/`）
+| 标签 | 动画类 | 效果 |
+|------|--------|------|
+| `{PullOutRacket}` | `PullOutRacket` | 从百宝袋掏出球拍 |
+| `{TakeOutFromPocket}` | `TakeOutFromPocket` | 从百宝袋掏东西（通用版） |
+| `{Spin}` | `Spin` | 原地开心转圈（经典） |
+| `{PanicSpin}` | `PanicSpin` | 惊慌转圈（手乱挥） |
+| `{NoseBlink}` | `NoseBlink` | 鼻子闪烁（害羞） |
+| `{Float}` | `Float` | 竹蜻蜓式悬浮飞行 |
+| `{WaddleWalk}` | `WaddleWalk` | 摇摇摆摆走路 |
+
+### 大雄专属动作（`animations/nobita/`）
+| 标签 | 动画类 | 效果 |
+|------|--------|------|
+| `{Cry}` | `Cry` | 哭泣擦眼泪 |
+| `{LazyStretch}` | `LazyStretch` | 伸懒腰 |
+| `{Grovel}` | `Grovel` | 跪地求饶 |
+| `{StudyDespair}` | `StudyDespair` | 学习绝望（抱头） |
+| `{TriumphPose}` | `TriumphPose` | 得意V字姿势 |
+| `{RunAway}` | `RunAway` | 抱头鼠窜 |
+
+### 小静专属动作（`animations/shizuka/`）
+| 标签 | 动画类 | 效果 |
+|------|--------|------|
+| `{Curtsy}` | `Curtsy` | 行屈膝礼 |
+| `{Giggle}` | `Giggle` | 捂嘴笑 |
+| `{PlayViolin}` | `PlayViolin` | 拉小提琴 |
+| `{Scold}` | `Scold` | 叉腰训斥 |
+| `{Blush}` | `Blush` | 害羞低头 |
+| `{Baking}` | `Baking` | 做饼干（搅拌动作） |
 
 ### 运镜标签清单（已注册在 `camera/common/`）
 | 标签 | 运镜类 | 效果 |
