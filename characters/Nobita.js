@@ -35,11 +35,11 @@ export class Nobita extends CharacterBase {
     headGroup.add(chin);
 
     // ========== HAIR ==========
-    // Top hair (rounded dome for bowl-cut look)
-    const topHairGeo = new THREE.SphereGeometry(0.37, 32, 32, 0, Math.PI * 2, 0, Math.PI / 1.6);
+    // Top hair (rounded dome for bowl-cut look) - keep it high, don't cover forehead
+    const topHairGeo = new THREE.SphereGeometry(0.37, 32, 32, 0, Math.PI * 2, 0, Math.PI / 2.2);
     const topHair = new THREE.Mesh(topHairGeo, hairMat);
-    topHair.position.set(0, 0.1, 0.03);
-    topHair.scale.set(1.08, 0.88, 1.05);
+    topHair.position.set(0, 0.14, 0.02);
+    topHair.scale.set(1.08, 0.75, 1.05);
     headGroup.add(topHair);
 
     // Back hair volume
@@ -61,13 +61,13 @@ export class Nobita extends CharacterBase {
     rightSideburn.scale.set(0.55, 1.3, 0.75);
     headGroup.add(rightSideburn);
 
-    // Bangs (short straight fringe)
-    const bangGeo = new THREE.BoxGeometry(0.08, 0.1, 0.015);
+    // Bangs (very short fringe high on forehead)
+    const bangGeo = new THREE.BoxGeometry(0.08, 0.05, 0.015);
     for (let i = -2; i <= 2; i++) {
       const bang = new THREE.Mesh(bangGeo, hairMat);
-      bang.position.set(i * 0.075, 0.16, 0.34);
-      bang.rotation.x = -0.15;
-      bang.rotation.z = i * 0.04;
+      bang.position.set(i * 0.075, 0.26, 0.32);
+      bang.rotation.x = -0.1;
+      bang.rotation.z = i * 0.03;
       headGroup.add(bang);
     }
 
