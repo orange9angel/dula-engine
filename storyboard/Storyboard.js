@@ -5,7 +5,7 @@ import { CharacterRegistry } from '../characters/index.js';
 import { VoiceRegistry } from '../voices/index.js';
 import { AnimationRegistry } from '../animations/index.js';
 import { CameraMoveRegistry } from '../camera/index.js';
-import { CourtDirector } from '../lib/CourtDirector.js';
+import { DirectorRegistry } from '../lib/DirectorRegistry.js';
 import { MusicDirector, MusicCue } from '../lib/MusicDirector.js';
 
 const DEFAULT_TRANSITIONS = {
@@ -331,7 +331,10 @@ export class Storyboard {
     // ParkScene setup: characters placement, props, ball events from choreography config
     if (this.currentSceneName === 'ParkScene') {
       const courtGeom = this.currentScene.getCourtGeometry();
-      this.courtDirector = new CourtDirector(courtGeom);
+      const CourtDirector = DirectorRegistry['CourtDirector'];
+      if (CourtDirector) {
+        this.courtDirector = new CourtDirector(courtGeom);
+      }
 
       const parkChoreo = this.choreography ? this.choreography.parkScene : null;
 
