@@ -93,6 +93,7 @@ def parse_story(text):
         dialogue = re.sub(r"\[\w+\]\s*", "", dialogue)
         dialogue = re.sub(r"\{Camera:[^}]+\}\s*", "", dialogue)
         dialogue = re.sub(r"\{Music:[^}]+\}\s*", "", dialogue)
+        dialogue = re.sub(r"\{[A-Za-z]\w*:[^}]+\}\s*", "", dialogue)
         dialogue = re.sub(r"\{(?!Camera:)\w+\}\s*", "", dialogue).strip()
 
         # Parse music cue

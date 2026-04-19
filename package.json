@@ -1,6 +1,6 @@
 {
   "name": "dula-engine",
-  "version": "0.1.5",
+  "version": "0.1.6",
   "description": "Dula animation engine — Web (Three.js) + Puppeteer offline renderer driven by .story scripts",
   "type": "module",
   "main": "index.js",
