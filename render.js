@@ -19,7 +19,7 @@ camera.lookAt(0, 1.5, 0);
 
 const outlineEffect = new OutlineEffect(renderer, {
   defaultThickness: 0.003,
-  defaultColor: new THREE.Color(0x000000),
+  defaultColor: [0, 0, 0],
   defaultAlpha: 0.85,
   defaultKeepAlive: true,
 });
