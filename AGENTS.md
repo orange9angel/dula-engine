@@ -271,6 +271,7 @@ node tools/verify_shots.js <episode-dir>
 | 单体项目拆分 | ✅ 已修复 | 拆分为 `dula-engine` + `dula-assets` + `dula-story` 三层架构。 |
 | 浏览器音频 404 | ✅ 已修复 | manifest `file` 改为纯文件名，由浏览器拼接完整 URL。 |
 | P0 语法扩展 | ✅ 已落地 | `{Ball:Serve|...}`、`{Prop:...}`、`{Position:...}`、`{Event:...}` 已支持。 |
+| TTS 朗读标签 | ✅ 已修复 | `generate_audio.py` 漏过滤 `{Ball:...}`/`{Prop:...}`/`{Position:...}`/`{Event:...}`，导致 TTS 读出英文参数。v0.1.6 已修复。 |
 | BGM 素材缺失 | ⚠️ 待补充 | `assets/audio/music/` 为空，需放入 WAV 素材。不影响出片（自动跳过）。 |
 | 对话自然度 | ⚠️ 待优化 | 用户反馈「必中球拍」梗的对话仍不够自然。 |
 | 球拍可见性 | ⚠️ 可优化 | 哆啦A梦身体较圆，球拍有时被遮挡。 |
