@@ -24,6 +24,13 @@ const outlineEffect = new OutlineEffect(renderer, {
   defaultKeepAlive: true,
 });
 
+// Load Story bootstrap (registers assets + custom plugins)
+try {
+  await import('/episode/bootstrap.js');
+} catch (e) {
+  console.warn('No bootstrap.js found, running with empty registries:', e.message);
+}
+
 const storyboard = new Storyboard(renderer, camera, null, outlineEffect);
 const fadeDiv = document.getElementById('fade');
 

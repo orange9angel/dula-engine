@@ -14,6 +14,13 @@ const camera = new THREE.PerspectiveCamera(45, width / height, 0.1, 1000);
 camera.position.set(0, 3, 10);
 camera.lookAt(0, 1.5, 0);
 
+// Load Story bootstrap (registers assets)
+try {
+  await import('/episode/bootstrap.js');
+} catch (e) {
+  console.warn('No bootstrap.js found:', e.message);
+}
+
 const storyboard = new Storyboard(renderer, camera);
 
 // Patch fetch so assets/audio paths resolve correctly from /tools/ base URL
@@ -26,7 +33,7 @@ window.fetch = async (url, ...args) => {
 };
 
 window.loadStoryboard = async () => {
-  await storyboard.load('../episode/script.story', '../episode/assets/audio/manifest.json');
+  await storyboard.load('/episode/script.story', '/episode/assets/audio/manifest.json');
 };
 
 window.captureAtTime = async (time) => {

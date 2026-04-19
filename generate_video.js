@@ -37,6 +37,17 @@ const server = http.createServer((req, res) => {
     return;
   }
 
+  // Serve node_modules from episode directory or story root
+  if (reqPath.startsWith('/node_modules/')) {
+    const relPath = reqPath.slice('/node_modules/'.length);
+    let filePath = path.join(EPISODE_DIR, 'node_modules', relPath);
+    if (!fs.existsSync(filePath)) {
+      filePath = path.join(process.cwd(), 'node_modules', relPath);
+    }
+    serveFile(filePath, res);
+    return;
+  }
+
   // Serve engine files from engine root
   const filePath = path.join(__dirname, reqPath === '/' ? 'render.html' : reqPath);
   serveFile(filePath, res);

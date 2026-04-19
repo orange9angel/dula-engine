@@ -25,16 +25,27 @@ const server = http.createServer((req, res) => {
   if (reqPath.startsWith('/episode/')) {
     const relPath = reqPath.slice('/episode/'.length);
     const filePath = path.join(EPISODE_DIR, relPath);
-    serveFile(filePath, res);
+    serveFile(filePath, res, req);
+    return;
+  }
+
+  // Serve node_modules from episode directory or story root
+  if (reqPath.startsWith('/node_modules/')) {
+    const relPath = reqPath.slice('/node_modules/'.length);
+    let filePath = path.join(EPISODE_DIR, 'node_modules', relPath);
+    if (!fs.existsSync(filePath)) {
+      filePath = path.join(process.cwd(), 'node_modules', relPath);
+    }
+    serveFile(filePath, res, req);
     return;
   }
 
   // Serve engine files from engine root
   const filePath = path.join(ROOT, reqPath === '/' ? 'render.html' : reqPath);
-  serveFile(filePath, res);
+  serveFile(filePath, res, req);
 });
 
-function serveFile(filePath, res) {
+function serveFile(filePath, res, req) {
   const ext = path.extname(filePath).toLowerCase();
   const mimeTypes = {
     '.html': 'text/html',
@@ -51,6 +62,7 @@ function serveFile(filePath, res) {
 
   fs.readFile(filePath, (err, data) => {
     if (err) {
+      console.log(`[404] ${filePath} (requested: ${req ? req.url : 'unknown'})`);
       res.writeHead(404);
       res.end('Not Found');
       return;
