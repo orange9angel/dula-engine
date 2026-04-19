@@ -1,5 +1,5 @@
 import * as THREE from 'three';
-import { SRTParser } from '../lib/SRTParser.js';
+import { StoryParser } from '../lib/StoryParser.js';
 import { SceneRegistry } from '../scenes/index.js';
 import { CharacterRegistry } from '../characters/index.js';
 import { VoiceRegistry } from '../voices/index.js';
@@ -8,18 +8,16 @@ import { CameraMoveRegistry } from '../camera/index.js';
 import { CourtDirector } from '../lib/CourtDirector.js';
 import { MusicDirector, MusicCue } from '../lib/MusicDirector.js';
 
-const SCENE_EXITS = {
-  RoomScene: { x: -4, z: 2 },
-};
-
-const SCENE_ENTRANCES = {
-  ParkScene: { x: -2, z: 3 },
+const DEFAULT_TRANSITIONS = {
+  exits: {},
+  entrances: {},
 };
 
 export class Storyboard {
-  constructor(renderer, camera, audioDestination = null) {
+  constructor(renderer, camera, audioDestination = null, outlineEffect = null) {
     this.renderer = renderer;
     this.camera = camera;
+    this.outlineEffect = outlineEffect;
     this.currentScene = null;
     this.currentSceneName = null;
     this.characters = new Map(); // name -> instance
@@ -35,13 +33,34 @@ export class Storyboard {
     this.courtDirector = null;
     this.ballEvents = [];  // precomputed ball trajectories for ParkScene
     this.musicDirector = new MusicDirector();
+    this.transitions = DEFAULT_TRANSITIONS;
+    this.choreography = null;
   }
 
-  async load(srtPath, manifestPath) {
+  async load(storyPath, manifestPath) {
     // Load SRT
-    const srtResponse = await fetch(srtPath);
-    const srtText = await srtResponse.text();
-    this.entries = SRTParser.parse(srtText);
+    const storyResponse = await fetch(storyPath);
+    const storyText = await storyResponse.text();
+    this.entries = StoryParser.parse(storyText);
+
+    // Derive episode base URL from storyPath (e.g., "/episode/script.story" -> "/episode/")
+    const episodeBase = storyPath.substring(0, storyPath.lastIndexOf('/') + 1);
+
+    // Load transitions config
+    try {
+      const transResponse = await fetch(`${episodeBase}config/transitions.json`);
+      this.transitions = await transResponse.json();
+    } catch (e) {
+      console.warn('No transitions config found, using defaults.');
+    }
+
+    // Load choreography config
+    try {
+      const choreoResponse = await fetch(`${episodeBase}config/choreography.json`);
+      this.choreography = await choreoResponse.json();
+    } catch (e) {
+      console.warn('No choreography config found.');
+    }
 
     // Load audio manifest
     let manifest = { entries: [] };
@@ -53,10 +72,12 @@ export class Storyboard {
     }
 
     // Decode audio files & record actual durations
+    const manifestBase = manifestPath.substring(0, manifestPath.lastIndexOf('/') + 1);
     this.audioDurations = new Map();
     for (const item of manifest.entries) {
       try {
-        const resp = await fetch(item.file);
+        const audioUrl = item.file.startsWith('/') ? item.file : manifestBase + item.file;
+        const resp = await fetch(audioUrl);
         const arrayBuffer = await resp.arrayBuffer();
         const audioBuffer = await this.audioContext.decodeAudioData(arrayBuffer);
         this.audioBuffers.set(item.index, audioBuffer);
@@ -145,7 +166,7 @@ export class Storyboard {
         if (action === 'Play' && options.name) {
           const cue = new MusicCue({
             name: options.name,
-            file: `assets/audio/music/${options.name}.wav`,
+            file: `${episodeBase}assets/audio/music/${options.name}.wav`,
             startTime: entry.startTime,
             endTime: options.endTime ?? entry.endTime,
             fadeIn: options.fadeIn ?? 1.0,
@@ -175,8 +196,8 @@ export class Storyboard {
 
       if (prevScene !== nextScene) {
         // Walk to exit before switch
-        if (WalkAnim && SCENE_EXITS[prevScene]) {
-          const exit = SCENE_EXITS[prevScene];
+        if (WalkAnim && this.transitions.exits[prevScene]) {
+          const exit = this.transitions.exits[prevScene];
           let walkStart = switchTime - 1.5;
           if (i > 0) {
             const prevEntry = this.entries[i - 1];
@@ -192,8 +213,8 @@ export class Storyboard {
         }
 
         // Teleport to entrance and walk in after switch
-        if (SCENE_ENTRANCES[nextScene] && nextScene !== 'ParkScene' && WalkAnim) {
-          const entrance = SCENE_ENTRANCES[nextScene];
+        if (this.transitions.entrances[nextScene] && nextScene !== 'ParkScene' && WalkAnim) {
+          const entrance = this.transitions.entrances[nextScene];
           // Generic indoor scene walk in
           const chars = Array.from(this.characters.values());
           chars.forEach((char, idx) => {
@@ -250,36 +271,46 @@ export class Storyboard {
       this.arrangeCharacters();
     }
 
-    // ParkScene setup: characters at opposite baselines via CourtDirector
+    // ParkScene setup: characters placement, props, ball events from choreography config
     if (this.currentSceneName === 'ParkScene') {
       const courtGeom = this.currentScene.getCourtGeometry();
       this.courtDirector = new CourtDirector(courtGeom);
 
-      const dora = this.characters.get('Doraemon');
-      const nobi = this.characters.get('Nobita');
-      const shizuka = this.characters.get('Shizuka');
+      const parkChoreo = this.choreography ? this.choreography.parkScene : null;
 
-      if (dora && nobi) {
-        const doraPos = this.courtDirector.placePlayer('Doraemon', 'northBaseline');
-        const nobiPos = this.courtDirector.placePlayer('Nobita', 'southBaseline');
-
-        dora.setPosition(doraPos.x, doraPos.y, doraPos.z);
-        dora.mesh.lookAt(nobiPos.x, nobiPos.y, nobiPos.z);
-        nobi.setPosition(nobiPos.x, nobiPos.y, nobiPos.z);
-        nobi.mesh.lookAt(doraPos.x, doraPos.y, doraPos.z);
+      if (parkChoreo && parkChoreo.placements) {
+        for (const p of parkChoreo.placements) {
+          const char = this.characters.get(p.character);
+          if (!char) continue;
+          if (p.spot) {
+            const pos = this.courtDirector.placePlayer(p.character, p.spot, { face: p.face });
+            char.setPosition(pos.x, pos.y, pos.z);
+          } else if (p.x !== undefined && p.z !== undefined) {
+            char.setPosition(p.x, p.y !== undefined ? p.y : 0, p.z);
+          }
+          if (p.face) {
+            if (p.face === 'center') {
+              char.mesh.lookAt(0, 1.5, 0);
+            } else {
+              const targetChar = this.characters.get(p.face);
+              if (targetChar) {
+                char.mesh.lookAt(targetChar.mesh.position.x, targetChar.mesh.position.y + 1.5, targetChar.mesh.position.z);
+              } else {
+                char.mesh.lookAt(0, 1.5, 0);
+              }
+            }
+          }
+        }
       }
 
-      // Shizuka sits on the sideline bench, facing the court
-      if (shizuka) {
-        shizuka.setPosition(5.5, 0.01, 2.5);
-        shizuka.mesh.lookAt(0, 1.5, 0);
-      }
-
-      for (const [name, char] of this.characters) {
-        if (!char.racketAttached && (name === 'Doraemon' || name === 'Nobita')) {
-          const color = name === 'Doraemon' ? 0xe60012 : 0x1a3c8a;
-          this.currentScene.attachRacketToCharacter(char, color);
-          char.racketAttached = true;
+      if (parkChoreo && parkChoreo.props) {
+        for (const p of parkChoreo.props) {
+          const char = this.characters.get(p.character);
+          if (char && !char.racketAttached && p.type === 'racket') {
+            const color = parseInt(p.color, 16);
+            this.currentScene.attachRacketToCharacter(char, color);
+            char.racketAttached = true;
+          }
         }
       }
 
@@ -306,26 +337,37 @@ export class Storyboard {
     const cd = this.courtDirector;
     this.ballEvents = [];
 
-    // Rally 1: Doraemon serves to Nobita @ ~30s
-    const r1 = cd.computeBallFlight('Doraemon', 'Nobita', { arcHeight: 1.5 });
-    if (r1) this.ballEvents.push({ type: 'player', startTime: 30.0, flight: r1, from: 'Doraemon', to: 'Nobita' });
+    const parkChoreo = this.choreography ? this.choreography.parkScene : null;
+    const ballEventsCfg = parkChoreo ? parkChoreo.ballEvents : [];
+    const storyEventsCfg = parkChoreo ? parkChoreo.storyEvents : [];
 
-    // Rally 2: Nobita smashes back to Doraemon @ ~32.5s
-    const r2 = cd.computeBallFlight('Nobita', 'Doraemon', { arcHeight: 1.2 });
-    if (r2) this.ballEvents.push({ type: 'player', startTime: 32.5, flight: r2, from: 'Nobita', to: 'Doraemon' });
+    for (const cfg of ballEventsCfg) {
+      if (cfg.type === 'player' && cfg.from && cfg.to) {
+        const flight = cd.computeBallFlight(cfg.from, cfg.to, {
+          arcHeight: cfg.arcHeight,
+          speed: cfg.speed,
+        });
+        if (flight) {
+          this.ballEvents.push({
+            type: 'player',
+            startTime: cfg.startTime,
+            flight,
+            from: cfg.from,
+            to: cfg.to,
+          });
+        }
+      }
+    }
 
     // Queue swing animations for ball events
     const SwingRacket = AnimationRegistry['SwingRacket'];
     if (SwingRacket) {
       const swingDuration = new SwingRacket().duration;
       for (const ev of this.ballEvents) {
-        // Hitter swings at startTime
         const hitter = this.characters.get(ev.from);
         if (hitter) {
           hitter.playAnimation(SwingRacket, ev.startTime, swingDuration);
         }
-
-        // Receiver swings just before ball arrives (only for player->player)
         if (ev.type === 'player' && ev.to) {
           const receiver = this.characters.get(ev.to);
           if (receiver && ev.flight) {
@@ -336,16 +378,28 @@ export class Storyboard {
       }
     }
 
-    // Fly-away: racket drags Nobita into the sky @ ~44.5s
-    const nobi = this.characters.get('Nobita');
-    const nobiPos = cd.getPlayerPosition('Nobita');
-    if (nobi && nobiPos) {
-      // Ascend over 3s
-      nobi.moveTo({ x: nobiPos.x, y: 15, z: nobiPos.z }, 44.5, 3.0);
-      // Frantic arm waving while airborne
-      const WaveHand = AnimationRegistry['WaveHand'];
-      if (WaveHand) {
-        nobi.playAnimation(WaveHand, 44.5, 8.0);
+    // Story events (e.g., fly-away)
+    for (const ev of storyEventsCfg) {
+      const char = this.characters.get(ev.character);
+      if (!char) continue;
+      if (ev.type === 'move') {
+        let targetPos;
+        if (ev.relative) {
+          const current = { x: char.mesh.position.x, y: char.mesh.position.y, z: char.mesh.position.z };
+          targetPos = {
+            x: current.x + (ev.x || 0),
+            y: current.y + (ev.y || 0),
+            z: current.z + (ev.z || 0),
+          };
+        } else {
+          targetPos = { x: ev.x || 0, y: ev.y || 0, z: ev.z || 0 };
+        }
+        char.moveTo(targetPos, ev.startTime, ev.duration || 1.0);
+      } else if (ev.type === 'animate') {
+        const AnimClass = AnimationRegistry[ev.action];
+        if (AnimClass) {
+          char.playAnimation(AnimClass, ev.startTime, ev.duration);
+        }
       }
     }
   }
@@ -532,7 +586,11 @@ export class Storyboard {
 
   render() {
     if (this.currentScene) {
-      this.renderer.render(this.currentScene.scene, this.camera);
+      if (this.outlineEffect) {
+        this.outlineEffect.render(this.currentScene.scene, this.camera);
+      } else {
+        this.renderer.render(this.currentScene.scene, this.camera);
+      }
     }
   }
 }

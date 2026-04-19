@@ -9,18 +9,38 @@ const __dirname = path.dirname(__filename);
 const ROOT = path.join(__dirname, '..');
 
 const PORT = 8766;
-const CHECK_DIR = path.join(ROOT, 'storyboard');
 
-// Simple static file server from project root
+// Resolve episode path from CLI argument
+const EPISODE = process.argv[2] || path.join(ROOT, 'content', 'episodes', 'bichong_qiupai');
+const EPISODE_DIR = path.isAbsolute(EPISODE) ? EPISODE : path.join(ROOT, EPISODE);
+const CHECK_DIR = path.join(EPISODE_DIR, 'storyboard');
+
+console.log(`Episode dir: ${EPISODE_DIR}`);
+
+// Simple static file server from project root with episode mount
 const server = http.createServer((req, res) => {
   const reqPath = req.url.split('?')[0];
-  let filePath = path.join(ROOT, reqPath === '/' ? 'render.html' : reqPath);
+
+  // Serve episode content under /episode/
+  if (reqPath.startsWith('/episode/')) {
+    const relPath = reqPath.slice('/episode/'.length);
+    const filePath = path.join(EPISODE_DIR, relPath);
+    serveFile(filePath, res);
+    return;
+  }
+
+  // Serve engine files from engine root
+  const filePath = path.join(ROOT, reqPath === '/' ? 'render.html' : reqPath);
+  serveFile(filePath, res);
+});
+
+function serveFile(filePath, res) {
   const ext = path.extname(filePath).toLowerCase();
   const mimeTypes = {
     '.html': 'text/html',
     '.js': 'application/javascript',
     '.json': 'application/json',
-    '.srt': 'text/plain',
+    '.story': 'text/plain',
     '.mp3': 'audio/mpeg',
     '.png': 'image/png',
     '.jpg': 'image/jpeg',
@@ -38,9 +58,10 @@ const server = http.createServer((req, res) => {
     res.writeHead(200, { 'Content-Type': contentType });
     res.end(data);
   });
-});
+}
 
 function deleteCheckFiles() {
+  if (!fs.existsSync(CHECK_DIR)) return;
   const files = fs.readdirSync(CHECK_DIR).filter((f) => f.startsWith('check_shot_') && f.endsWith('.jpg'));
   for (const f of files) {
     fs.unlinkSync(path.join(CHECK_DIR, f));
@@ -76,9 +97,10 @@ server.listen(PORT, async () => {
     await window.loadStoryboard();
   });
 
-  // Parse SRT to determine shot times
-  const srtText = fs.readFileSync(path.join(ROOT, 'subtitles', 'script.srt'), 'utf-8');
-  const lines = srtText.replace(/\r\n/g, '\n').replace(/\r/g, '\n').split('\n');
+  // Parse story to determine shot times
+  const storyPath = path.join(EPISODE_DIR, 'script.story');
+  const storyText = fs.readFileSync(storyPath, 'utf-8');
+  const lines = storyText.replace(/\r\n/g, '\n').replace(/\r/g, '\n').split('\n');
   const times = [];
   let i = 0;
   while (i < lines.length) {
@@ -108,6 +130,7 @@ server.listen(PORT, async () => {
     const base64 = dataUrl.split(',')[1];
     const buffer = Buffer.from(base64, 'base64');
     const filename = path.join(CHECK_DIR, `check_shot_${String(idx + 1).padStart(2, '0')}.jpg`);
+    fs.mkdirSync(CHECK_DIR, { recursive: true });
     fs.writeFileSync(filename, buffer);
     console.log(`Shot ${String(idx + 1).padStart(2, '0')}: t=${t.toFixed(2)}s -> ${filename}`);
   }

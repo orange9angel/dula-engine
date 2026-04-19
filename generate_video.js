@@ -10,20 +10,45 @@ const __dirname = path.dirname(__filename);
 
 const PORT = 8765;
 const FPS = 30;
-const FRAMES_DIR = path.join(__dirname, 'storyboard', 'frames');
-const MIXED_AUDIO = path.join(__dirname, 'assets', 'audio', 'mixed.wav');
-const OUTPUT_VIDEO = path.join(__dirname, 'output.mp4');
 
-// Simple static file server
+// Resolve episode path from CLI argument
+const EPISODE = process.argv[2] || path.join(__dirname, 'content', 'episodes', 'bichong_qiupai');
+const EPISODE_DIR = path.isAbsolute(EPISODE) ? EPISODE : path.join(__dirname, EPISODE);
+
+const FRAMES_DIR = path.join(EPISODE_DIR, 'storyboard', 'frames');
+const MIXED_AUDIO = path.join(EPISODE_DIR, 'assets', 'audio', 'mixed.wav');
+const OUTPUT_VIDEO = path.join(EPISODE_DIR, 'output', 'output.mp4');
+
+console.log(`Episode dir: ${EPISODE_DIR}`);
+
+// Ensure output directory exists
+fs.mkdirSync(path.dirname(OUTPUT_VIDEO), { recursive: true });
+fs.mkdirSync(FRAMES_DIR, { recursive: true });
+
+// Simple static file server with episode mount point
 const server = http.createServer((req, res) => {
   const reqPath = req.url.split('?')[0];
-  let filePath = path.join(__dirname, reqPath === '/' ? 'render.html' : reqPath);
+
+  // Serve episode content under /episode/
+  if (reqPath.startsWith('/episode/')) {
+    const relPath = reqPath.slice('/episode/'.length);
+    const filePath = path.join(EPISODE_DIR, relPath);
+    serveFile(filePath, res);
+    return;
+  }
+
+  // Serve engine files from engine root
+  const filePath = path.join(__dirname, reqPath === '/' ? 'render.html' : reqPath);
+  serveFile(filePath, res);
+});
+
+function serveFile(filePath, res) {
   const ext = path.extname(filePath).toLowerCase();
   const mimeTypes = {
     '.html': 'text/html',
     '.js': 'application/javascript',
     '.json': 'application/json',
-    '.srt': 'text/plain',
+    '.story': 'text/plain',
     '.mp3': 'audio/mpeg',
     '.webm': 'video/webm',
     '.png': 'image/png',
@@ -40,7 +65,7 @@ const server = http.createServer((req, res) => {
     res.writeHead(200, { 'Content-Type': contentType });
     res.end(data);
   });
-});
+}
 
 async function combineVideo(totalFrames) {
   const framePattern = path.join(FRAMES_DIR, 'frame_%05d.png');
@@ -58,6 +83,7 @@ function cleanup() {
 
 server.listen(PORT, async () => {
   console.log(`Server listening on http://localhost:${PORT}`);
+  console.log(`Episode mounted at http://localhost:${PORT}/episode/`);
 
   // Prepare frames directory
   if (fs.existsSync(FRAMES_DIR)) {

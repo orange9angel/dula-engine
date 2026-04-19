@@ -16,7 +16,7 @@ export class SceneBase {
   }
 
   addLights() {
-    const ambient = new THREE.AmbientLight(0xffffff, 0.6);
+    const ambient = new THREE.AmbientLight(0xffffff, 0.85);
     this.scene.add(ambient);
     this.lights.push(ambient);
 

@@ -3,10 +3,15 @@ import re
 import subprocess
 import sys
 
-SRT_PATH = os.path.join(os.path.dirname(__file__), '..', 'subtitles', 'script.srt')
-AUDIO_DIR = os.path.join(os.path.dirname(__file__), '..', 'assets', 'audio')
+ROOT = os.path.join(os.path.dirname(__file__), '..')
+EPISODE = sys.argv[1] if len(sys.argv) > 1 else os.path.join(ROOT, 'content', 'episodes', 'bichong_qiupai')
+if not os.path.isabs(EPISODE):
+    EPISODE = os.path.join(ROOT, EPISODE)
 
-def parse_srt(path):
+STORY_PATH = os.path.join(EPISODE, 'script.story')
+AUDIO_DIR = os.path.join(EPISODE, 'assets', 'audio')
+
+def parse_story(path):
     with open(path, 'r', encoding='utf-8') as f:
         text = f.read()
     lines = text.replace('\r\n', '\n').replace('\r', '\n').split('\n')
@@ -52,7 +57,7 @@ def format_time(t):
     return f"{hours:02d}:{minutes:02d}:{seconds:02d},{millis:03d}"
 
 def main():
-    entries = parse_srt(SRT_PATH)
+    entries = parse_story(STORY_PATH)
     current_time = 0.0
     gap = 0.4  # silence gap between lines
     scene_gap = 1.5  # extra time for scene transitions
@@ -100,10 +105,10 @@ def main():
         lines.append(e['content'])
         lines.append('')
 
-    with open(SRT_PATH, 'w', encoding='utf-8') as f:
+    with open(STORY_PATH, 'w', encoding='utf-8') as f:
         f.write('\n'.join(lines))
 
-    print(f"Adjusted SRT written to {SRT_PATH}")
+    print(f"Adjusted story written to {STORY_PATH}")
     print(f"Total duration: {format_time(current_time)}")
 
 if __name__ == '__main__':

@@ -1,8 +1,21 @@
 #!/usr/bin/env python3
 """
-Generate audio files from SRT using edge-tts.
-Reads script/script.story and outputs MP3 files to assets/audio/.
-Also generates assets/audio/manifest.json and assets/audio/mixed.wav.
+Generate audio files from SRT using Alibaba Cloud DashScope CosyVoice API.
+This script provides higher-quality, more characterful TTS voices compared
+to edge-tts, at the cost of requiring a DashScope API key.
+
+Usage:
+    1. Get a free API key from https://dashscope.console.aliyun.com/
+    2. Set environment variable: $env:DASHSCOPE_API_KEY="your-key"
+    3. Run: python tools/generate_audio_dashscope.py
+
+If the API key is missing or the API call fails, the script falls back to
+edge-tts automatically.
+
+Recommended CosyVoice presets for this project:
+    - Doraemon : longxiaochun  (活泼女声，模拟原版女配音员的高亢风格)
+    - Nobita   : longxiaocheng (年轻男声，懦弱少年感)
+    - Shizuka  : longxiaoxia   (温柔女声)
 """
 
 import asyncio
@@ -14,6 +27,11 @@ import struct
 import subprocess
 import sys
 import wave
+
+try:
+    import requests
+except ImportError:
+    requests = None
 
 # Add project root to path for importing lib if needed
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -28,28 +46,55 @@ OUTPUT_DIR = os.path.join(EPISODE, "assets", "audio")
 MANIFEST_PATH = os.path.join(OUTPUT_DIR, "manifest.json")
 SFX_DIR = os.path.join(OUTPUT_DIR, "sfx")
 
-VOICE_CONFIG_PATH = os.path.join(EPISODE, "config", "voice_config.json")
-CHOREOGRAPHY_PATH = os.path.join(EPISODE, "config", "choreography.json")
+# Tennis hit SFX timing (seconds) — synced with Storyboard ball events
+TENNIS_HIT_TIMES = [30.0, 32.5]
+
+DASHSCOPE_API_KEY = os.environ.get("DASHSCOPE_API_KEY", "")
+DASHSCOPE_ENDPOINT = "https://dashscope.aliyuncs.com/api/v1/services/audio/tts/speech"
+
+# CosyVoice preset mapping — feel free to change these via env vars
+VOICE_MAP = {
+    "Doraemon": {
+        "voice": os.environ.get("VOICE_DORAEMON", "longxiaochun"),
+        "rate": 1.2,   # speed multiplier (0.5 ~ 2.0)
+        "pitch": 0,    # pitch shift in semitones (-12 ~ 12)
+    },
+    "Nobita": {
+        "voice": os.environ.get("VOICE_NOBITA", "longxiaocheng"),
+        "rate": 1.0,
+        "pitch": -2,
+    },
+    "Shizuka": {
+        "voice": os.environ.get("VOICE_SHIZUKA", "longxiaoxia"),
+        "rate": 1.0,
+        "pitch": 2,
+    },
+}
+
+# Fallback edge-tts config (used when DashScope is unavailable)
+EDGE_VOICE_MAP = {
+    "Doraemon": {
+        "voice": "zh-CN-XiaoxiaoNeural",
+        "rate": "+20%",
+        "pitch": "+20Hz",
+        "volume": "+10%",
+    },
+    "Nobita": {
+        "voice": "zh-CN-YunxiaNeural",
+        "rate": "+0%",
+        "pitch": "-10Hz",
+        "volume": "+0%",
+    },
+    "Shizuka": {
+        "voice": "zh-CN-XiaoyiNeural",
+        "rate": "+0%",
+        "pitch": "+5Hz",
+        "volume": "+0%",
+    },
+}
 
 
-def load_voice_config():
-    with open(VOICE_CONFIG_PATH, "r", encoding="utf-8") as f:
-        return json.load(f)
-
-
-def load_tennis_hit_times():
-    """Derive SFX timings from choreography ball events; fallback to defaults."""
-    try:
-        with open(CHOREOGRAPHY_PATH, "r", encoding="utf-8") as f:
-            choreo = json.load(f)
-        park = choreo.get("parkScene", {})
-        ball_events = park.get("ballEvents", [])
-        return [ev["startTime"] for ev in ball_events if "startTime" in ev]
-    except Exception:
-        return [30.0, 32.5]
-
-
-def parse_story(text):
+def parse_srt(text):
     lines = text.replace("\r\n", "\n").replace("\r", "\n").split("\n")
     entries = []
     music_cues = []
@@ -95,7 +140,6 @@ def parse_story(text):
         dialogue = re.sub(r"\{Music:[^}]+\}\s*", "", dialogue)
         dialogue = re.sub(r"\{(?!Camera:)\w+\}\s*", "", dialogue).strip()
 
-        # Parse music cue
         music_match = re.search(r"\{Music:([^}]+)\}", content)
         if music_match:
             parts = [p.strip() for p in music_match.group(1).split("|")]
@@ -116,15 +160,13 @@ def parse_story(text):
                 "options": options,
             })
 
-        entries.append(
-            {
-                "index": index,
-                "startTime": start,
-                "endTime": end,
-                "character": character,
-                "dialogue": dialogue,
-            }
-        )
+        entries.append({
+            "index": index,
+            "startTime": start,
+            "endTime": end,
+            "character": character,
+            "dialogue": dialogue,
+        })
     return entries, music_cues
 
 
@@ -140,8 +182,58 @@ def get_mp3_duration(mp3_path):
         return None
 
 
+def generate_with_dashscope(text, voice, rate=1.0, pitch=0, output_path=None):
+    """Call DashScope CosyVoice API. Returns bytes on success, None on failure."""
+    if not DASHSCOPE_API_KEY or requests is None:
+        return None
+
+    payload = {
+        "model": "cosyvoice-v1",
+        "input": {"text": text},
+        "parameters": {
+            "voice": voice,
+            "format": "mp3",
+            "sample_rate": 24000,
+        },
+    }
+
+    try:
+        resp = requests.post(
+            DASHSCOPE_ENDPOINT,
+            headers={
+                "Authorization": f"Bearer {DASHSCOPE_API_KEY}",
+                "Content-Type": "application/json",
+            },
+            json=payload,
+            timeout=60,
+        )
+        if resp.status_code == 200:
+            if output_path:
+                with open(output_path, "wb") as f:
+                    f.write(resp.content)
+            return resp.content
+        else:
+            print(f"  DashScope API error: {resp.status_code} - {resp.text[:200]}")
+            return None
+    except Exception as e:
+        print(f"  DashScope request failed: {e}")
+        return None
+
+
+async def generate_with_edgetts(text, voice, rate, pitch, volume, output_path):
+    """Fallback to edge-tts."""
+    import edge_tts
+    communicate = edge_tts.Communicate(
+        text=text,
+        voice=voice,
+        rate=rate,
+        pitch=pitch,
+        volume=volume,
+    )
+    await communicate.save(output_path)
+
+
 def generate_tennis_hit_sfx(filepath):
-    """Generate a short 'pop' tennis hit sound effect."""
     sample_rate = 48000
     duration = 0.12
     num_samples = int(sample_rate * duration)
@@ -153,11 +245,9 @@ def generate_tennis_hit_sfx(filepath):
         w.setframerate(sample_rate)
         for i in range(num_samples):
             t = i / sample_rate
-            # Frequency sweep from high to low for a 'thwack'
             freq = 700 * math.exp(-t / 0.02)
             phase = 2 * math.pi * freq * t
             sine = math.sin(phase)
-            # Deterministic pseudo-noise
             noise = ((i * 9301 + 49297) % 233280) / 233280.0 * 2 - 1
             envelope = math.exp(-t / 0.02)
             sample = (sine * 0.6 + noise * 0.4) * envelope * 0.45
@@ -168,7 +258,6 @@ def generate_tennis_hit_sfx(filepath):
 
 
 def check_bgm_files(cues):
-    """Check that referenced BGM files exist; warn if missing."""
     music_dir = os.path.join(OUTPUT_DIR, "music")
     missing = []
     for cue in cues:
@@ -178,21 +267,14 @@ def check_bgm_files(cues):
     if missing:
         print(f"\n[WARNING] Missing BGM files: {missing}")
         print("Please download high-quality music tracks and place them in:")
-        print(f"  {music_dir}")
-        print(f"See {EPISODE}/assets/audio/music/README.md for sourcing guide.\n")
+        print(f"  {music_dir}\n")
     return len(missing) == 0
 
 
 def mix_bgm_track(cues, entries, duration, sample_rate=48000):
-    """
-    将多个 BGM cue 混合成一条总线，自动应用：
-    - Fade In/Out（正弦曲线）
-    - Sidechain Ducking（对话避让，带 Attack/Release）
-    """
     n = int(duration * sample_rate)
     track = [0.0] * n
 
-    # Build duck events from dialogue entries
     duck_events = []
     for entry in entries:
         if entry.get("character") and entry.get("dialogue"):
@@ -204,7 +286,6 @@ def mix_bgm_track(cues, entries, duration, sample_rate=48000):
                 "attack": 0.12,
                 "release": 0.35,
             })
-    # Merge overlapping duck events
     if duck_events:
         duck_events.sort(key=lambda x: x["startTime"])
         merged = [duck_events[0]]
@@ -230,7 +311,6 @@ def mix_bgm_track(cues, entries, duration, sample_rate=48000):
             cue_frames = w.getnframes()
             cue_data = w.readframes(cue_frames)
 
-        # Decode samples (assume 16-bit)
         fmt = '<h' if cue_nch == 1 else '<hh'
         frame_size = cue_width * cue_nch
         samples = []
@@ -238,7 +318,6 @@ def mix_bgm_track(cues, entries, duration, sample_rate=48000):
             val = struct.unpack(fmt, cue_data[i:i+frame_size])[0] / 32768.0
             samples.append(val)
 
-        # Resample if needed (naive nearest-neighbor for simplicity)
         if cue_sr != sample_rate:
             ratio = cue_sr / sample_rate
             resampled = []
@@ -264,16 +343,13 @@ def mix_bgm_track(cues, entries, duration, sample_rate=48000):
                 continue
 
             vol = base_vol
-            # Fade In (sine ease)
             if t < cue["startTime"] + fade_in and fade_in > 0:
                 p = (t - cue["startTime"]) / fade_in
                 vol *= math.sin(p * math.pi / 2)
-            # Fade Out (sine ease)
             if t > end_time - fade_out and fade_out > 0:
                 p = (end_time - t) / fade_out
                 vol *= math.sin(p * math.pi / 2)
 
-            # Ducking
             for duck in duck_events:
                 if t >= duck["startTime"] and t < duck["endTime"]:
                     if t < duck["startTime"] + duck["attack"] and duck["attack"] > 0:
@@ -289,11 +365,9 @@ def mix_bgm_track(cues, entries, duration, sample_rate=48000):
 
             track[idx] += s * vol
 
-    # Soft limiter
     for i in range(len(track)):
         track[i] = math.tanh(track[i] * 1.2) / 1.2
 
-    # Save temp BGM track
     bgm_path = os.path.join(OUTPUT_DIR, "_temp_bgm.wav")
     with wave.open(bgm_path, 'w') as w:
         w.setnchannels(1)
@@ -324,7 +398,6 @@ def mix_audio(manifest, bgm_path=None, sfx_events=None):
         filters.append(f"[{stream_idx}:a]adelay={delay_ms}|{delay_ms}[ad{stream_idx}]")
         stream_idx += 1
 
-    # Add BGM track
     bgm_idx = None
     if bgm_path:
         inputs.append(f'-i "{bgm_path}"')
@@ -332,7 +405,6 @@ def mix_audio(manifest, bgm_path=None, sfx_events=None):
         bgm_idx = stream_idx
         stream_idx += 1
 
-    # Add SFX tracks
     if sfx_events:
         for sfx in sfx_events:
             inputs.append(f'-i "{sfx["file"]}"')
@@ -360,65 +432,89 @@ def mix_audio(manifest, bgm_path=None, sfx_events=None):
 
 
 async def generate():
-    try:
-        import edge_tts
-    except ImportError:
-        print("Please install edge-tts: pip install edge-tts")
-        sys.exit(1)
-
     os.makedirs(OUTPUT_DIR, exist_ok=True)
 
     with open(STORY_PATH, "r", encoding="utf-8") as f:
-        story_text = f.read()
+        srt_text = f.read()
 
-    entries, music_cues = parse_story(story_text)
-    voice_config = load_voice_config()
-    tennis_hit_times = load_tennis_hit_times()
-    manifest = {
-        "entries": [],
-    }
+    entries, music_cues = parse_srt(srt_text)
+    manifest = {"entries": []}
+
+    use_dashscope = bool(DASHSCOPE_API_KEY)
+    if use_dashscope:
+        print("Using DashScope CosyVoice API for TTS generation.")
+        print("(Set DASHSCOPE_API_KEY env var to use this; otherwise falls back to edge-tts)")
+    else:
+        print("DASHSCOPE_API_KEY not set. Falling back to edge-tts.")
+        try:
+            import edge_tts
+        except ImportError:
+            print("Please install edge-tts: pip install edge-tts")
+            sys.exit(1)
 
     for entry in entries:
         char = entry["character"]
         dialogue = entry["dialogue"]
         if not char or not dialogue:
             continue
-        cfg = voice_config.get(char)
-        if not cfg:
-            print(f"Warning: no voice config for {char}, skipping.")
-            continue
 
         filename = f"{entry['index']:03d}_{char}.mp3"
         filepath = os.path.join(OUTPUT_DIR, filename)
 
-        communicate = edge_tts.Communicate(
-            text=dialogue,
-            voice=cfg["voice"],
-            rate=cfg["rate"],
-            pitch=cfg["pitch"],
-            volume=cfg["volume"],
-        )
-        await communicate.save(filepath)
+        if use_dashscope:
+            cfg = VOICE_MAP.get(char)
+            if not cfg:
+                print(f"Warning: no voice config for {char}, skipping.")
+                continue
+            print(f"Generating {filename} via DashScope (voice={cfg['voice']})...")
+            result = generate_with_dashscope(
+                dialogue,
+                cfg["voice"],
+                output_path=filepath,
+            )
+            if result is None:
+                print(f"  DashScope failed for {filename}, falling back to edge-tts...")
+                use_dashscope = False
+                try:
+                    import edge_tts
+                except ImportError:
+                    print("Please install edge-tts: pip install edge-tts")
+                    sys.exit(1)
+                cfg = EDGE_VOICE_MAP.get(char)
+                if cfg:
+                    await generate_with_edgetts(
+                        dialogue, cfg["voice"], cfg["rate"],
+                        cfg["pitch"], cfg["volume"], filepath
+                    )
+                else:
+                    continue
+        else:
+            cfg = EDGE_VOICE_MAP.get(char)
+            if not cfg:
+                print(f"Warning: no voice config for {char}, skipping.")
+                continue
+            await generate_with_edgetts(
+                dialogue, cfg["voice"], cfg["rate"],
+                cfg["pitch"], cfg["volume"], filepath
+            )
+
         audio_duration = get_mp3_duration(filepath)
         print(f"Generated: {filename} ({audio_duration:.2f}s)")
 
-        manifest["entries"].append(
-            {
-                "index": entry["index"],
-                "startTime": entry["startTime"],
-                "endTime": entry["endTime"],
-                "character": char,
-                "dialogue": dialogue,
-                "file": filename,
-                "audioDuration": audio_duration,
-            }
-        )
+        manifest["entries"].append({
+            "index": entry["index"],
+            "startTime": entry["startTime"],
+            "endTime": entry["endTime"],
+            "character": char,
+            "dialogue": dialogue,
+            "file": filename,
+            "audioDuration": audio_duration,
+        })
 
     with open(MANIFEST_PATH, "w", encoding="utf-8") as f:
         json.dump(manifest, f, ensure_ascii=False, indent=2)
     print(f"Manifest written to: {MANIFEST_PATH}")
 
-    # Check BGM files and mix if available
     bgm_path = None
     if music_cues:
         max_time = max(e["endTime"] for e in entries) if entries else 70.0
@@ -438,11 +534,10 @@ async def generate():
         else:
             print("Skipping BGM mix — files missing.")
 
-    # Generate tennis hit SFX and add to mix
     sfx_events = []
     tennis_hit_path = os.path.join(SFX_DIR, "tennis_hit.wav")
     generate_tennis_hit_sfx(tennis_hit_path)
-    for t in tennis_hit_times:
+    for t in TENNIS_HIT_TIMES:
         sfx_events.append({"file": tennis_hit_path, "startTime": t})
 
     mix_audio(manifest, bgm_path, sfx_events)

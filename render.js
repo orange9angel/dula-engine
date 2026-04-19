@@ -1,4 +1,5 @@
 import * as THREE from 'three';
+import { OutlineEffect } from 'three/addons/effects/OutlineEffect.js';
 import { Storyboard } from './storyboard/Storyboard.js';
 
 const width = 1920;
@@ -16,11 +17,18 @@ const camera = new THREE.PerspectiveCamera(45, width / height, 0.1, 1000);
 camera.position.set(0, 3, 10);
 camera.lookAt(0, 1.5, 0);
 
-const storyboard = new Storyboard(renderer, camera);
+const outlineEffect = new OutlineEffect(renderer, {
+  defaultThickness: 0.003,
+  defaultColor: new THREE.Color(0x000000),
+  defaultAlpha: 0.85,
+  defaultKeepAlive: true,
+});
+
+const storyboard = new Storyboard(renderer, camera, null, outlineEffect);
 const fadeDiv = document.getElementById('fade');
 
 async function renderFrames() {
-  await storyboard.load('./subtitles/script.srt', './assets/audio/manifest.json');
+  await storyboard.load('/episode/script.story', '/episode/assets/audio/manifest.json');
 
   const totalDuration = Math.max(...storyboard.entries.map((e) => e.endTime)) + 1.5;
   const totalFrames = Math.ceil(totalDuration * fps);

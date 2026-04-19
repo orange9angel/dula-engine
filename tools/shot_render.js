@@ -22,13 +22,13 @@ const storyboard = new Storyboard(renderer, camera);
 const originalFetch = window.fetch;
 window.fetch = async (url, ...args) => {
   if (typeof url === 'string' && url.startsWith('assets/audio/')) {
-    url = '../' + url;
+    url = '../episode/' + url;
   }
   return originalFetch(url, ...args);
 };
 
 async function init() {
-  await storyboard.load('../subtitles/script.srt', '../assets/audio/manifest.json');
+  await storyboard.load('../episode/script.story', '../episode/assets/audio/manifest.json');
   window.storyboardReady = true;
 }
 

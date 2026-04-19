@@ -8,11 +8,23 @@ export class Doraemon extends CharacterBase {
 
   build() {
     // Materials
-    const blueMat = new THREE.MeshStandardMaterial({ color: 0x0096e1, roughness: 0.4 });
-    const whiteMat = new THREE.MeshStandardMaterial({ color: 0xffffff, roughness: 0.4 });
-    const redMat = new THREE.MeshStandardMaterial({ color: 0xe60012, roughness: 0.3 });
-    const yellowMat = new THREE.MeshStandardMaterial({ color: 0xffd700, roughness: 0.3 });
-    const blackMat = new THREE.MeshStandardMaterial({ color: 0x111111, roughness: 0.5 });
+    const toonGradient = (() => {
+      const canvas = document.createElement('canvas');
+      canvas.width = 4; canvas.height = 1;
+      const ctx = canvas.getContext('2d');
+      const g = ctx.createLinearGradient(0, 0, 4, 0);
+      g.addColorStop(0, '#aaa'); g.addColorStop(0.4, '#ccc'); g.addColorStop(0.7, '#eee'); g.addColorStop(1, '#fff');
+      ctx.fillStyle = g; ctx.fillRect(0, 0, 4, 1);
+      const tex = new THREE.CanvasTexture(canvas);
+      tex.magFilter = THREE.NearestFilter;
+      tex.minFilter = THREE.NearestFilter;
+      return tex;
+    })();
+    const blueMat = new THREE.MeshToonMaterial({ color: 0x0096e1, gradientMap: toonGradient });
+    const whiteMat = new THREE.MeshToonMaterial({ color: 0xffffff, gradientMap: toonGradient });
+    const redMat = new THREE.MeshToonMaterial({ color: 0xe60012, gradientMap: toonGradient });
+    const yellowMat = new THREE.MeshToonMaterial({ color: 0xffd700, gradientMap: toonGradient });
+    const blackMat = new THREE.MeshToonMaterial({ color: 0x111111, gradientMap: toonGradient });
 
     // Head group
     const headGroup = new THREE.Group();
@@ -164,14 +176,14 @@ export class Doraemon extends CharacterBase {
       // Handle
       const handle = new THREE.Mesh(
         new THREE.CylinderGeometry(0.02, 0.025, 0.4, 8),
-        new THREE.MeshStandardMaterial({ color: 0x111111 })
+        new THREE.MeshToonMaterial({ color: 0x111111, gradientMap: toonGradient })
       );
       handle.position.y = -0.2;
       racket.add(handle);
       // Frame
       const frame = new THREE.Mesh(
         new THREE.TorusGeometry(0.18, 0.02, 8, 16),
-        new THREE.MeshStandardMaterial({ color: 0xe60012 })
+        new THREE.MeshToonMaterial({ color: 0xe60012, gradientMap: toonGradient })
       );
       frame.position.y = 0.18;
       racket.add(frame);

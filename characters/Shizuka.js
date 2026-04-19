@@ -7,15 +7,27 @@ export class Shizuka extends CharacterBase {
   }
 
   build() {
-    const skinMat = new THREE.MeshStandardMaterial({ color: 0xffdfc4, roughness: 0.5 });
-    const dressMat = new THREE.MeshStandardMaterial({ color: 0xff8da1, roughness: 0.6 });
-    const hairMat = new THREE.MeshStandardMaterial({ color: 0x1a1a1a, roughness: 0.7 });
-    const whiteMat = new THREE.MeshStandardMaterial({ color: 0xffffff, roughness: 0.3 });
-    const eyeWhiteMat = new THREE.MeshStandardMaterial({ color: 0xffffff, roughness: 0.3 });
-    const blackMat = new THREE.MeshStandardMaterial({ color: 0x111111, roughness: 0.5 });
-    const shoeMat = new THREE.MeshStandardMaterial({ color: 0xff4444, roughness: 0.5 });
-    const lipMat = new THREE.MeshStandardMaterial({ color: 0xff6b8a, roughness: 0.4 });
-    const blushMat = new THREE.MeshStandardMaterial({ color: 0xffaaaa, roughness: 0.6, transparent: true, opacity: 0.45 });
+    const toonGradient = (() => {
+      const canvas = document.createElement('canvas');
+      canvas.width = 4; canvas.height = 1;
+      const ctx = canvas.getContext('2d');
+      const g = ctx.createLinearGradient(0, 0, 4, 0);
+      g.addColorStop(0, '#aaa'); g.addColorStop(0.4, '#ccc'); g.addColorStop(0.7, '#eee'); g.addColorStop(1, '#fff');
+      ctx.fillStyle = g; ctx.fillRect(0, 0, 4, 1);
+      const tex = new THREE.CanvasTexture(canvas);
+      tex.magFilter = THREE.NearestFilter;
+      tex.minFilter = THREE.NearestFilter;
+      return tex;
+    })();
+    const skinMat = new THREE.MeshToonMaterial({ color: 0xffdfc4, gradientMap: toonGradient });
+    const dressMat = new THREE.MeshToonMaterial({ color: 0xff8da1, gradientMap: toonGradient });
+    const hairMat = new THREE.MeshToonMaterial({ color: 0x1a1a1a, gradientMap: toonGradient });
+    const whiteMat = new THREE.MeshToonMaterial({ color: 0xffffff, gradientMap: toonGradient });
+    const eyeWhiteMat = new THREE.MeshToonMaterial({ color: 0xffffff, gradientMap: toonGradient });
+    const blackMat = new THREE.MeshToonMaterial({ color: 0x111111, gradientMap: toonGradient });
+    const shoeMat = new THREE.MeshToonMaterial({ color: 0xff4444, gradientMap: toonGradient });
+    const lipMat = new THREE.MeshToonMaterial({ color: 0xff6b8a, gradientMap: toonGradient });
+    const blushMat = new THREE.MeshToonMaterial({ color: 0xffaaaa, gradientMap: toonGradient, transparent: true, opacity: 0.45 });
 
     // ========== HEAD GROUP ==========
     const headGroup = new THREE.Group();

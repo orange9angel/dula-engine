@@ -7,80 +7,70 @@ export class Nobita extends CharacterBase {
   }
 
   build() {
-    const skinMat = new THREE.MeshStandardMaterial({ color: 0xffdfc4, roughness: 0.5 });
-    const shirtMat = new THREE.MeshStandardMaterial({ color: 0xffd700, roughness: 0.6 });
-    const shortsMat = new THREE.MeshStandardMaterial({ color: 0x1a3c8a, roughness: 0.6 });
-    const hairMat = new THREE.MeshStandardMaterial({ color: 0x1a1a1a, roughness: 0.7 });
-    const eyeWhiteMat = new THREE.MeshStandardMaterial({ color: 0xffffff, roughness: 0.3 });
-    const blackMat = new THREE.MeshStandardMaterial({ color: 0x111111, roughness: 0.5 });
-    const blueMat = new THREE.MeshStandardMaterial({ color: 0x1a3c8a, roughness: 0.6 });
-    const lipMat = new THREE.MeshStandardMaterial({ color: 0xcc5555, roughness: 0.5 });
+    const toonGradient = (() => {
+      const canvas = document.createElement('canvas');
+      canvas.width = 4; canvas.height = 1;
+      const ctx = canvas.getContext('2d');
+      const g = ctx.createLinearGradient(0, 0, 4, 0);
+      g.addColorStop(0, '#aaa'); g.addColorStop(0.4, '#ccc'); g.addColorStop(0.7, '#eee'); g.addColorStop(1, '#fff');
+      ctx.fillStyle = g; ctx.fillRect(0, 0, 4, 1);
+      const tex = new THREE.CanvasTexture(canvas);
+      tex.magFilter = THREE.NearestFilter;
+      tex.minFilter = THREE.NearestFilter;
+      return tex;
+    })();
+
+    const skinMat = new THREE.MeshToonMaterial({ color: 0xffdfc4, gradientMap: toonGradient });
+    const shirtMat = new THREE.MeshToonMaterial({ color: 0xffd700, gradientMap: toonGradient });
+    const shortsMat = new THREE.MeshToonMaterial({ color: 0x1a3c8a, gradientMap: toonGradient });
+    const hairMat = new THREE.MeshToonMaterial({ color: 0x1a1a1a, gradientMap: toonGradient });
+    const eyeWhiteMat = new THREE.MeshToonMaterial({ color: 0xffffff, gradientMap: toonGradient });
+    const blackMat = new THREE.MeshToonMaterial({ color: 0x111111, gradientMap: toonGradient });
+    const blueMat = new THREE.MeshToonMaterial({ color: 0x1a3c8a, gradientMap: toonGradient });
+    const lipMat = new THREE.MeshToonMaterial({ color: 0xcc5555, gradientMap: toonGradient });
 
     // ========== HEAD GROUP ==========
     const headGroup = new THREE.Group();
     headGroup.position.y = 1.95;
 
-    // Face base (round, slightly wider)
-    const faceGeo = new THREE.SphereGeometry(0.35, 32, 32);
+    // Face base: round face (original Nobita style)
+    const faceGeo = new THREE.SphereGeometry(0.33, 32, 32);
     const face = new THREE.Mesh(faceGeo, skinMat);
-    face.scale.set(1.08, 1.12, 0.95);
+    face.scale.set(1.0, 1.05, 0.95);
+    face.position.y = 0.02;
     face.castShadow = true;
     headGroup.add(face);
 
-    // Chin ellipsoid - rounder than Shizuka
-    const chinGeo = new THREE.SphereGeometry(0.2, 24, 24);
-    const chin = new THREE.Mesh(chinGeo, skinMat);
-    chin.position.set(0, -0.22, 0.12);
-    chin.scale.set(1.15, 0.75, 0.95);
-    headGroup.add(chin);
+    // ========== EARS ==========
+    const earGeo = new THREE.SphereGeometry(0.05, 16, 16);
+    const leftEar = new THREE.Mesh(earGeo, skinMat);
+    leftEar.position.set(-0.35, 0.04, 0.04);
+    leftEar.scale.set(0.45, 1.0, 0.55);
+    headGroup.add(leftEar);
 
-    // ========== HAIR ==========
-    // Top hair (rounded dome for bowl-cut look) - keep it high, don't cover forehead
-    const topHairGeo = new THREE.SphereGeometry(0.37, 32, 32, 0, Math.PI * 2, 0, Math.PI / 2.2);
-    const topHair = new THREE.Mesh(topHairGeo, hairMat);
-    topHair.position.set(0, 0.14, 0.02);
-    topHair.scale.set(1.08, 0.75, 1.05);
-    headGroup.add(topHair);
+    const rightEar = new THREE.Mesh(earGeo, skinMat);
+    rightEar.position.set(0.35, 0.04, 0.04);
+    rightEar.scale.set(0.45, 1.0, 0.55);
+    headGroup.add(rightEar);
 
-    // Back hair volume
-    const backHairGeo = new THREE.SphereGeometry(0.36, 32, 32, 0, Math.PI * 2, 0, Math.PI / 2);
-    const backHair = new THREE.Mesh(backHairGeo, hairMat);
-    backHair.position.set(0, 0.02, -0.1);
-    backHair.rotation.x = Math.PI * 0.88;
-    headGroup.add(backHair);
-
-    // Sideburns (temple coverage)
-    const sideburnGeo = new THREE.SphereGeometry(0.09, 16, 16);
-    const leftSideburn = new THREE.Mesh(sideburnGeo, hairMat);
-    leftSideburn.position.set(-0.32, -0.04, 0.08);
-    leftSideburn.scale.set(0.55, 1.3, 0.75);
-    headGroup.add(leftSideburn);
-
-    const rightSideburn = new THREE.Mesh(sideburnGeo, hairMat);
-    rightSideburn.position.set(0.32, -0.04, 0.08);
-    rightSideburn.scale.set(0.55, 1.3, 0.75);
-    headGroup.add(rightSideburn);
-
-    // Bangs (very short fringe high on forehead)
-    const bangGeo = new THREE.BoxGeometry(0.08, 0.05, 0.015);
-    for (let i = -2; i <= 2; i++) {
-      const bang = new THREE.Mesh(bangGeo, hairMat);
-      bang.position.set(i * 0.075, 0.26, 0.32);
-      bang.rotation.x = -0.1;
-      bang.rotation.z = i * 0.03;
-      headGroup.add(bang);
-    }
+    // ========== HAIR (watermelon / bowl cut style) ==========
+    // Main bowl - classic watermelon/bowl cut covering the whole head
+    const bowlGeo = new THREE.SphereGeometry(0.36, 32, 32, 0, Math.PI * 2, 0, Math.PI * 0.55);
+    const bowlHair = new THREE.Mesh(bowlGeo, hairMat);
+    bowlHair.position.set(0, 0.10, -0.04);
+    bowlHair.scale.set(1.03, 0.88, 0.92);
+    headGroup.add(bowlHair);
 
     // ========== EYES ==========
     const eyeGeo = new THREE.SphereGeometry(0.055, 16, 16);
 
     const leftEye = new THREE.Mesh(eyeGeo, eyeWhiteMat);
-    leftEye.position.set(-0.12, 0.04, 0.3);
+    leftEye.position.set(-0.12, 0.04, 0.30);
     leftEye.scale.set(1.05, 1.1, 0.42);
     headGroup.add(leftEye);
 
     const rightEye = new THREE.Mesh(eyeGeo, eyeWhiteMat);
-    rightEye.position.set(0.12, 0.04, 0.3);
+    rightEye.position.set(0.12, 0.04, 0.30);
     rightEye.scale.set(1.05, 1.1, 0.42);
     headGroup.add(rightEye);
 
@@ -107,56 +97,72 @@ export class Nobita extends CharacterBase {
     rightHl.position.set(0.13, 0.055, 0.335);
     headGroup.add(rightHl);
 
-    // ========== EYEBROWS ==========
-    const browGeo = new THREE.CapsuleGeometry(0.004, 0.06, 4, 8);
+    // ========== EYEBROWS (thin, barely visible under the bangs) ==========
+    const browGeo = new THREE.CapsuleGeometry(0.003, 0.04, 4, 8);
     const leftBrow = new THREE.Mesh(browGeo, blackMat);
-    leftBrow.position.set(-0.12, 0.15, 0.3);
-    leftBrow.rotation.z = 0.12;
+    leftBrow.position.set(-0.12, 0.17, 0.30);
+    leftBrow.rotation.z = Math.PI / 2 + 0.05;
     headGroup.add(leftBrow);
 
     const rightBrow = new THREE.Mesh(browGeo, blackMat);
-    rightBrow.position.set(0.12, 0.15, 0.3);
-    rightBrow.rotation.z = -0.12;
+    rightBrow.position.set(0.12, 0.17, 0.30);
+    rightBrow.rotation.z = Math.PI / 2 - 0.05;
     headGroup.add(rightBrow);
 
-    // ========== GLASSES (frames + lenses) ==========
-    const glassFrameGeo = new THREE.TorusGeometry(0.07, 0.012, 8, 24);
-    const leftGlass = new THREE.Mesh(glassFrameGeo, blackMat);
-    leftGlass.position.set(-0.12, 0.04, 0.33);
-    headGroup.add(leftGlass);
+    // ========== GLASSES (big round frames, iconic Nobita style) ==========
+    const frameRadius = 0.14; // smaller round glasses
+    const tubeRadius = 0.004; // very thin frame
+    const frameGeo = new THREE.TorusGeometry(frameRadius, tubeRadius, 8, 24);
 
-    const rightGlass = new THREE.Mesh(glassFrameGeo, blackMat);
-    rightGlass.position.set(0.12, 0.04, 0.33);
-    headGroup.add(rightGlass);
+    const leftFrame = new THREE.Mesh(frameGeo, blackMat);
+    leftFrame.position.set(-0.14, 0.04, 0.345);
+    headGroup.add(leftFrame);
 
-    const glassBridgeGeo = new THREE.CylinderGeometry(0.01, 0.01, 0.08, 8);
+    const rightFrame = new THREE.Mesh(frameGeo, blackMat);
+    rightFrame.position.set(0.14, 0.04, 0.345);
+    headGroup.add(rightFrame);
+
+    const glassBridgeGeo = new THREE.CylinderGeometry(0.005, 0.005, 0.12, 8);
     const bridge = new THREE.Mesh(glassBridgeGeo, blackMat);
     bridge.rotation.z = Math.PI / 2;
-    bridge.position.set(0, 0.04, 0.33);
+    bridge.position.set(0, 0.04, 0.34);
     headGroup.add(bridge);
 
-    // Lenses (translucent white circles)
-    const lensGeo = new THREE.CircleGeometry(0.065, 24);
-    const lensMat = new THREE.MeshStandardMaterial({
+    // Lenses (pure white, nearly opaque - classic anime glasses look)
+    const lensGeo = new THREE.CircleGeometry(frameRadius - 0.005, 24);
+    const lensMat = new THREE.MeshToonMaterial({
       color: 0xffffff,
-      roughness: 0.1,
+      gradientMap: toonGradient,
       transparent: true,
-      opacity: 0.2,
+      opacity: 0.88,
       side: THREE.DoubleSide,
     });
     const leftLens = new THREE.Mesh(lensGeo, lensMat);
-    leftLens.position.set(-0.12, 0.04, 0.34);
+    leftLens.position.set(-0.14, 0.04, 0.345);
     headGroup.add(leftLens);
 
     const rightLens = new THREE.Mesh(lensGeo, lensMat);
-    rightLens.position.set(0.12, 0.04, 0.34);
+    rightLens.position.set(0.14, 0.04, 0.345);
     headGroup.add(rightLens);
 
+    // ========== NOSE ==========
+    const noseGeo = new THREE.SphereGeometry(0.016, 16, 16);
+    // ========== NOSE (small tip well below the bridge, slightly behind to not overlap) ==========
+    const nose = new THREE.Mesh(noseGeo, skinMat);
+    nose.position.set(0, -0.14, 0.28);
+    nose.scale.set(1, 0.8, 1.2);
+    headGroup.add(nose);
+
     // ========== MOUTH ==========
-    const mouthGeo = new THREE.SphereGeometry(0.022, 16, 16);
-    const mouth = new THREE.Mesh(mouthGeo, lipMat);
-    mouth.position.set(0, -0.14, 0.32);
-    mouth.scale.set(1.8, 0.6, 0.6);
+    // Smile: black, longer,贴合 face surface
+    const mouthCurve = new THREE.QuadraticBezierCurve3(
+      new THREE.Vector3(-0.12, 0, 0),
+      new THREE.Vector3(0, -0.015, 0),
+      new THREE.Vector3(0.12, 0, 0)
+    );
+    const mouthGeo = new THREE.TubeGeometry(mouthCurve, 16, 0.006, 8, false);
+    const mouth = new THREE.Mesh(mouthGeo, blackMat);
+    mouth.position.set(0, -0.18, 0.26);
     headGroup.add(mouth);
     this.mouth = mouth;
     this.mouthBaseScaleX = mouth.scale.x;
@@ -179,12 +185,34 @@ export class Nobita extends CharacterBase {
     body.castShadow = true;
     this.mesh.add(body);
 
-    // Collar
-    const collarGeo = new THREE.TorusGeometry(0.15, 0.02, 8, 16);
-    const collar = new THREE.Mesh(collarGeo, shirtMat);
+    // White collar ring
+    const whiteMat = new THREE.MeshToonMaterial({ color: 0xffffff, gradientMap: toonGradient });
+    const collarGeo = new THREE.TorusGeometry(0.17, 0.035, 8, 16);
+    const collar = new THREE.Mesh(collarGeo, whiteMat);
     collar.rotation.x = Math.PI / 2;
     collar.position.y = 1.53;
     this.mesh.add(collar);
+
+    // Collar flaps (big polo shirt style)
+    const flapGeo = new THREE.BoxGeometry(0.14, 0.22, 0.03);
+    const leftFlap = new THREE.Mesh(flapGeo, whiteMat);
+    leftFlap.position.set(-0.12, 1.42, 0.20);
+    leftFlap.rotation.z = 0.40;
+    leftFlap.rotation.x = -0.30;
+    this.mesh.add(leftFlap);
+
+    const rightFlap = new THREE.Mesh(flapGeo, whiteMat);
+    rightFlap.position.set(0.12, 1.42, 0.20);
+    rightFlap.rotation.z = -0.40;
+    rightFlap.rotation.x = -0.30;
+    this.mesh.add(rightFlap);
+
+    // Shirt button (small yellow dot at collar base)
+    const buttonGeo = new THREE.SphereGeometry(0.018, 8, 8);
+    const button = new THREE.Mesh(buttonGeo, shirtMat);
+    button.position.set(0, 1.44, 0.17);
+    button.scale.set(1, 1, 0.6);
+    this.mesh.add(button);
 
     // Puff sleeves
     const sleeveGeo = new THREE.SphereGeometry(0.095, 16, 16);

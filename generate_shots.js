@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 /**
  * Shot-by-shot video generator.
- * Reads subtitles/script.srt and outputs one MP4 per entry to output/shots/.
+ * Reads episode script.story and outputs one MP4 per entry to episode output/shots/.
  * Each shot is rendered independently with its corresponding audio segment.
  */
 import puppeteer from 'puppeteer';
@@ -10,34 +10,55 @@ import fs from 'fs';
 import path from 'path';
 import { fileURLToPath } from 'url';
 import { execSync } from 'child_process';
-import { SRTParser } from './lib/SRTParser.js';
+import { StoryParser } from './lib/StoryParser.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
 const PORT = 8765;
 const FPS = 30;
-const MIXED_AUDIO = path.join(__dirname, 'assets', 'audio', 'mixed.wav');
-const SRT_PATH = path.join(__dirname, 'subtitles', 'script.srt');
-const OUTPUT_DIR = path.join(__dirname, 'output', 'shots');
-const FRAMES_BASE = path.join(__dirname, 'storyboard', 'shots');
 
-// Parse SRT
-const srtText = fs.readFileSync(SRT_PATH, 'utf-8');
-const entries = SRTParser.parse(srtText);
+// Resolve episode path from CLI argument
+const EPISODE = process.argv[2] || path.join(__dirname, 'content', 'episodes', 'bichong_qiupai');
+const EPISODE_DIR = path.isAbsolute(EPISODE) ? EPISODE : path.join(__dirname, EPISODE);
+
+const MIXED_AUDIO = path.join(EPISODE_DIR, 'assets', 'audio', 'mixed.wav');
+const STORY_PATH = path.join(EPISODE_DIR, 'script.story');
+const OUTPUT_DIR = path.join(EPISODE_DIR, 'output', 'shots');
+const FRAMES_BASE = path.join(EPISODE_DIR, 'storyboard', 'shots');
+
+console.log(`Episode dir: ${EPISODE_DIR}`);
+
+// Parse story
+const storyText = fs.readFileSync(STORY_PATH, 'utf-8');
+const entries = StoryParser.parse(storyText);
 
 fs.mkdirSync(OUTPUT_DIR, { recursive: true });
 
-// Simple static file server
+// Simple static file server with episode mount point
 const server = http.createServer((req, res) => {
   const reqPath = req.url.split('?')[0];
-  let filePath = path.join(__dirname, reqPath === '/' ? 'render.html' : reqPath);
+
+  // Serve episode content under /episode/
+  if (reqPath.startsWith('/episode/')) {
+    const relPath = reqPath.slice('/episode/'.length);
+    const filePath = path.join(EPISODE_DIR, relPath);
+    serveFile(filePath, res);
+    return;
+  }
+
+  // Serve engine files from engine root
+  const filePath = path.join(__dirname, reqPath === '/' ? 'render.html' : reqPath);
+  serveFile(filePath, res);
+});
+
+function serveFile(filePath, res) {
   const ext = path.extname(filePath).toLowerCase();
   const mimeTypes = {
     '.html': 'text/html',
     '.js': 'application/javascript',
     '.json': 'application/json',
-    '.srt': 'text/plain',
+    '.story': 'text/plain',
     '.mp3': 'audio/mpeg',
     '.webm': 'video/webm',
     '.png': 'image/png',
@@ -54,7 +75,7 @@ const server = http.createServer((req, res) => {
     res.writeHead(200, { 'Content-Type': contentType });
     res.end(data);
   });
-});
+}
 
 server.listen(PORT, async () => {
   console.log(`Server listening on http://localhost:${PORT}`);
