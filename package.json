@@ -1,6 +1,6 @@
 {
   "name": "dula-engine",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "Dula animation engine — Web (Three.js) + Puppeteer offline renderer driven by .story scripts",
   "type": "module",
   "main": "main.js",
@@ -26,7 +26,13 @@
   "scripts": {
     "test": "echo \"Error: no test specified\" && exit 1"
   },
-  "keywords": ["animation", "three.js", "puppeteer", "ffmpeg", "story-driven"],
+  "keywords": [
+    "animation",
+    "three.js",
+    "puppeteer",
+    "ffmpeg",
+    "story-driven"
+  ],
   "author": "",
   "license": "ISC",
   "dependencies": {
