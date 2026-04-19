@@ -1,6 +1,6 @@
 # Dula Engine — 开发规范与上下文
 
-> 本文档供 AI 开发代理阅读。引擎与内容分离：本仓库只包含渲染/音频执行代码，**剧本、配置、素材、输出**全部存放在内容仓库（`dula-story`）的 Episode 目录中。
+> 本文档供 AI 开发代理阅读。本仓库是三层架构的**纯净框架层**：只包含基类、Registry、渲染/音频执行代码。具体资产（角色/动画/场景/运镜/配音）在 [`dula-assets`](https://github.com/orange9angel/dula-assets)，内容（剧本/配置/素材/输出）在 [`dula-story`](https://github.com/orange9angel/dula-story)。
 
 ---
 
@@ -8,7 +8,15 @@
 
 基于 Web (Three.js) + Puppeteer 离线渲染的动画短片生成器。
 
-**架构原则**：引擎 = 执行算法，内容 = 声明数据。剧情决策不进代码，技术算法不进剧本。
+**架构原则**：引擎 = 执行算法与基类，资产 = 可复用实现，内容 = 声明数据。
+
+```
+dula-engine  ← 本仓库（框架：基类 + Registry + CLI + 渲染管线）
+   ↑ 注册
+dula-assets  ← 官方资产库（角色/动画/场景/运镜/配音/CourtDirector）
+   ↑ 消费
+dula-story   ← 内容仓库（剧本/配置/素材/输出）
+```
 
 - **输入**：内容仓库中的 Episode 目录（`script.story` + JSON 配置 + 音频素材）
 - **输出**：`output.mp4`（1920×1080@30fps，H.264/AAC）
@@ -42,44 +50,35 @@
 
 ```
 dula-engine/
+├── index.js                   # 统一公共入口（导出所有 Registry + 基类 + Storyboard）
 ├── generate_video.js          # 主渲染管线
 ├── render.html                # 浏览器渲染页面
 ├── render.js                  # 浏览器端帧循环
 ├── package.json
 ├── lib/
 │   ├── StoryParser.js         # .story 解析器（命名空间标签路由）
-│   ├── CourtDirector.js       # 场地-角色-球-相机协调计算层
-│   └── MusicDirector.js       # 配乐调度器（Cue/Duck/HitPoint/Stem）
+│   ├── CourtDirector.js       # ⚠️ 临时保留，待迁移到 dula-assets 后移除
+│   ├── MusicDirector.js       # 配乐调度器（Cue/Duck/HitPoint/Stem）
+│   └── MathUtils.js           # 通用数学工具
 ├── scenes/
-│   ├── index.js               # SceneRegistry
-│   ├── SceneBase.js           # 场景基类
-│   ├── RoomScene.js           # 室内场景
-│   └── ParkScene.js           # 公园场景（网球场/球/球拍）
+│   ├── index.js               # SceneRegistry（空 + registerScene）
+│   └── SceneBase.js           # 场景基类
 ├── characters/
-│   ├── index.js               # CharacterRegistry
-│   ├── CharacterBase.js       # 角色基类
-│   ├── Doraemon.js
-│   ├── Nobita.js
-│   └── Shizuka.js
+│   ├── index.js               # CharacterRegistry（空 + registerCharacter）
+│   └── CharacterBase.js       # 角色基类
 ├── animations/
 │   ├── AnimationBase.js
-│   ├── index.js               # AnimationRegistry
-│   ├── common/                # 通用动画
-│   ├── doraemon/              # 哆啦A梦专属
-│   └── nobita/                # 大雄专属
-│   └── shizuka/               # 静香专属
+│   └── index.js               # AnimationRegistry（空 + registerAnimation）
 ├── camera/
 │   ├── CameraMoveBase.js
-│   ├── index.js               # CameraMoveRegistry
-│   └── common/                # 通用运镜
+│   └── index.js               # CameraMoveRegistry（空 + registerCameraMove）
 ├── storyboard/
 │   └── Storyboard.js          # 导演核心
 ├── voices/
-│   └── index.js               # VoiceRegistry（预留）
+│   ├── index.js               # VoiceRegistry（空 + registerVoice）
+│   └── VoiceBase.js           # 配音基类
 └── tools/
     ├── generate_audio.py      # 音频管线
-    ├── generate_bgm.py        # 程序化 BGM 合成器（备用）
-    ├── adjust_srt.py          # 时间轴自动调整（备用）
     ├── verify_shots.js        # 逐镜头验证
     ├── verify.html            # 验证用浏览器入口
     └── verify_render.js       # 验证用渲染逻辑
@@ -269,7 +268,7 @@ node tools/verify_shots.js <episode-dir>
 | 移动卡顿 Bug | ✅ 已修复 | `moveTo` 首次 update 时 snapshot `startPos`。 |
 | 公园缺球拍/球 | ✅ 已修复 | `ParkScene` 新增 net、ball、racket。 |
 | 硬编码坐标耦合 | ✅ 已修复 | 引入 `CourtDirector`，角色/球/相机全部语义化计算。 |
-| 单体项目拆分 | ✅ 已修复 | 拆分为 `dula-engine` + `dula-story` 双仓库。 |
+| 单体项目拆分 | ✅ 已修复 | 拆分为 `dula-engine` + `dula-assets` + `dula-story` 三层架构。 |
 | 浏览器音频 404 | ✅ 已修复 | manifest `file` 改为纯文件名，由浏览器拼接完整 URL。 |
 | P0 语法扩展 | ✅ 已落地 | `{Ball:Serve|...}`、`{Prop:...}`、`{Position:...}`、`{Event:...}` 已支持。 |
 | BGM 素材缺失 | ⚠️ 待补充 | `assets/audio/music/` 为空，需放入 WAV 素材。不影响出片（自动跳过）。 |
