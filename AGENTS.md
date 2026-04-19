@@ -278,7 +278,40 @@ node tools/verify_shots.js <episode-dir>
 
 ---
 
-## 13. 开发工作流
+## 13. 版本管理与发布
+
+### 发版流程（Engine 侧）
+
+```bash
+cd dula-engine
+# 1. 确保 working directory clean
+git add -A && git commit -m "feat: ..."
+
+# 2. 打版本号（自动修改 package.json + package-lock.json + git tag）
+npm version patch       # patch: 0.1.0 -> 0.1.1
+# npm version minor     # minor: 0.1.1 -> 0.2.0
+# npm version major     # major: 0.2.0 -> 1.0.0
+
+# 3. 生成 release tarball
+npm pack                # -> dula-engine-0.1.1.tgz
+
+# 4. 上传到 GitHub Release Assets
+# 5. 推送 tag
+git push origin main --tags
+```
+
+### Story 侧升级引擎版本
+
+```bash
+cd dula-story
+# 方式 A：通过 GitHub Release URL
+npm install https://github.com/orange9angel/dula-engine/releases/download/v0.1.1/dula-engine-0.1.1.tgz
+
+# 方式 B：修改 package.json 后 install
+# "dependencies": { "dula-engine": "https://github.com/.../dula-engine-0.1.1.tgz" }
+```
+
+## 14. 开发工作流
 
 ### 修改剧本（Story 侧）
 1. 编辑 `script.story`。
@@ -287,9 +320,10 @@ node tools/verify_shots.js <episode-dir>
 4. 确认无误后，运行 `npx dula-render .`（或 `npm run render`）生成最终视频。
 
 ### 修改引擎代码（Engine 侧）
-1. 修改引擎仓库的对应 JS 文件。
-2. 在 Story 仓库运行 `npx dula-verify <episode>` 查看关键帧。
-3. 满意后再跑完整视频。引擎修改后 Story 侧无需重新安装（`file:` 依赖实时生效）。
+1. 下载/clone engine 源码修改 → 测试通过。
+2. 在 Story 仓库（使用 `file:` 或 tarball 安装）运行 `npx dula-verify <episode>` 查看关键帧。
+3. 满意后按「发版流程」打版本号、生成 tarball、上传 Release。
+4. Story 更新版本号安装新版本。
 
 ---
 
