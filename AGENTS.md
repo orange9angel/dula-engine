@@ -165,15 +165,49 @@ npm link dula-engine
 
 ## 7. 音频管线
 
-1. `python tools/generate_audio.py <episode>` 读取 `script.story`。
-2. **TTS**：对每句含 `[Character]` 的文本，调用 `edge_tts.Communicate` 生成 `{index:03d}_{Character}.mp3`。
-   - 声线配置从 `config/voice_config.json` 加载。
-3. **BGM**：读取 `.story` 中的 `{Music:Play|...}` 标签，从 `assets/audio/music/{name}.wav` 加载素材。
-   - 若素材缺失则自动跳过 BGM 混音，仅保留 TTS + SFX。
-4. **SFX**：合成 `tennis_hit.wav`，在 `choreography.json` 或 `.story` `{Ball:...}` 标签推导的时间点插入。
-5. **混音**：Python 样本级混音（Fade In/Out、Sidechain Ducking、Soft Limiter），最终 ffmpeg `amix` 输出 `mixed.wav`。
+引擎音频系统采用 **3-stage ffmpeg 混音**，支持 TTS、BGM、SFX 三层自动混合。
 
-`manifest.json` 中 `file` 字段为**纯文件名**（如 `002_Doraemon.mp3`），由浏览器端根据 `manifestPath` 拼接完整 URL。
+### Stage 1 — TTS（对白）
+`python tools/generate_audio.py <episode>` 读取 `script.story`，对每句含 `[Character]` 的文本调用 `edge_tts.Communicate` 生成 `{index:03d}_{Character}.mp3`。
+- 声线配置从 `config/voice_config.json` 加载。
+- `manifest.json` 中 `file` 字段为**纯文件名**（如 `002_Doraemon.mp3`），由浏览器端拼接完整 URL。
+
+### Stage 2 — BGM（配乐）
+`python tools/generate_bgm.py <episode>` 生成 BGM：
+1. **优先使用手动素材**：扫描 `materials/bgm/` 目录，若存在 `.mp3`/`.wav`/`.ogg` 文件，ffmpeg 转换为 48kHz mono WAV，输出到 `assets/audio/music/`。
+2. **Procedural 回退**：若手动素材缺失，使用 ADSR 包络 + 多轨叠加 + Delay 效果自动合成：
+   - `room_theme` — C major, 60 BPM
+   - `park_theme` — G major, 100 BPM, 8-bar AABA
+   - `chaos_theme` — Diminished, 130 BPM, 8-bar
+   - `tension_theme` — A minor, 120 BPM, 4-bar
+   - `wonder_theme` — F major, 90 BPM, 4-bar + bell lead
+3. `--force` 标志可强制重新生成（覆盖已有文件）。
+
+### Stage 3 — SFX（音效）
+`generate_audio.py` 从 `.story` 的 `{Event:...}`、`{Camera:...}`、`{Prop:...}` 标签自动提取剧情事件，调度对应 SFX：
+
+| 事件标签 | 匹配的 SFX |
+|----------|-----------|
+| `{Prop:TakeCopter}` | `takecopter_spin` |
+| `{Event:Move\|y>2}` / `{Camera:WhipPan}` | `whoosh_fast` |
+| `{Event:Move\|y<0}` / 负 Y 位移 | `fall_whistle` |
+| `{Camera:Shake}` | `impact_thud` |
+
+- **手动素材优先**：扫描 `materials/sfx/` 和 `assets/audio/sfx/` 中的 `.wav` 文件，通过模糊匹配（`whoosh_fast` 优先于 `whoosh`）找到最佳匹配。
+- **Procedural 回退**：若手动素材缺失，使用 Python `wave` 模块生成：
+  - `wind_strong` / `wind_gentle` — 粉红噪声 + 滤波
+  - `fall_whistle` — 频率下扫正弦波
+  - `impact_thud` — 低频衰减脉冲
+  - `whoosh_fast` — 白噪声爆发
+  - `takecopter_spin` — 正弦波叠加模拟旋转声
+
+### Stage 4 — 最终混音
+3-stage ffmpeg 混音（解决 Windows 命令行过长问题）：
+1. 预混所有对白 → `_temp_dialogue.wav`
+2. 预混所有 SFX → `_temp_sfx.wav`
+3. 最终混合：Dialogue + BGM + SFX，各自独立音量控制
+   - BGM 默认 `-20dB`，SFX 默认 `-12dB`
+   - 支持 Sidechain Ducking（对白时自动压低 BGM）
 
 ---
 
@@ -190,6 +224,7 @@ npm link dula-engine
 | `{Camera:MoveName\|key=value}` | 运镜指令 |
 | `{Music:Action\|key=value}` | 配乐提示 |
 | `{Ball:Action\|key=value}` | 球事件（Serve/Return/FlyTo…） |
+| `{SFX:Action\|key=value}` | 音效触发（手动指定 SFX 文件名） |
 | `{Prop:Action\|key=value}` | 道具操作（Racket attach/detach…） |
 | `{Position:Character\|key=value}` | 角色站位（spot 或坐标） |
 | `{Event:Action\|key=value}` | 通用剧情事件（Move/Animate…） |
@@ -220,10 +255,15 @@ npm link dula-engine
 室内默认场景。
 
 ### ParkScene (`scenes/ParkScene.js`)
-公园网球场场景，包含：草地、树木、长椅、网球场（带完整白线）、网球网、网球、球拍。
+公园场景，包含：草地、树木、长椅、喷泉、路灯、网球场（带完整白线）、网球网、网球、球拍。
 - `attachRacketToCharacter(character, color)`：将球拍附加到角色右手。
 - `setBallTrajectory(startTime, endTime, startPos, endPos, arcHeight)`：抛物线球飞行。
 - `getCourtGeometry()`：返回场地几何常量，供 `CourtDirector` 使用。
+
+### SkyScene (`scenes/SkyScene.js`)
+天空/高空场景，用于飞行戏份。包含：蓝天白云背景、远景城市轮廓。
+- `setCloudSpeed(speed)`：调整云层移动速度。
+- `setTimeOfDay(hour)`：调整光照色调（0-24）。
 
 ---
 
@@ -232,19 +272,19 @@ npm link dula-engine
 动画和运镜均通过 Registry 模式注册，以类名作为 key。
 
 ### 通用动画 (`animations/common/`)
-`Walk`, `Run`, `WaveHand`, `Jump`, `StompFoot`, `SwayBody`, `Nod`, `ShakeHead`, `TurnToCamera`, `SwingRacket`, `Bow`, `LookAround`, `PointForward`, `ScratchHead`, `HandsOnHips`, `ClapHands`, `Celebrate`, `Shrug`, `SurprisedJump`, `Tremble`, `Think`, `SitDown`, `CrossArms`
+`Walk`, `Run`, `WaveHand`, `Jump`, `StompFoot`, `SwayBody`, `Nod`, `ShakeHead`, `TurnToCamera`, `SwingRacket`, `Bow`, `LookAround`, `PointForward`, `ScratchHead`, `HandsOnHips`, `ClapHands`, `Celebrate`, `Shrug`, `SurprisedJump`, `Tremble`, `Think`, `SitDown`, `CrossArms`, `FlailArms`, `LookUp`, `ReachOut`
 
 ### 哆啦A梦专属 (`animations/doraemon/`)
-`PullOutRacket`, `TakeOutFromPocket`, `Spin`, `PanicSpin`, `NoseBlink`, `Float`, `WaddleWalk`
+`PullOutRacket`, `TakeOutFromPocket`, `Spin`, `PanicSpin`, `NoseBlink`, `Float`, `WaddleWalk`, `ReachHand`
 
 ### 大雄专属 (`animations/nobita/`)
-`Cry`, `LazyStretch`, `Grovel`, `StudyDespair`, `TriumphPose`, `RunAway`
+`Cry`, `LazyStretch`, `Grovel`, `StudyDespair`, `TriumphPose`, `RunAway`, `CrashLand`, `FallPanic`, `FlyPose`
 
 ### 静香专属 (`animations/shizuka/`)
-`Curtsy`, `Giggle`, `PlayViolin`, `Scold`, `Blush`, `Baking`
+`Curtsy`, `Giggle`, `PlayViolin`, `Scold`, `Blush`, `Baking`, `LookUpSky`, `WaveUp`
 
 ### 运镜 (`camera/common/`)
-`Static`, `ZoomIn`, `ZoomOut`, `Pan`, `Orbit`, `Shake`, `FollowCharacter`, `LowAngle`
+`Static`, `ZoomIn`, `ZoomOut`, `Pan`, `Orbit`, `Shake`, `FollowCharacter`, `LowAngle`, `CloseUp`, `OverShoulder`, `TwoShot`, `TrackingCloseUp`, `WhipPan`, `ReactionShot`
 
 ---
 
@@ -272,9 +312,14 @@ node tools/verify_shots.js <episode-dir>
 | 浏览器音频 404 | ✅ 已修复 | manifest `file` 改为纯文件名，由浏览器拼接完整 URL。 |
 | P0 语法扩展 | ✅ 已落地 | `{Ball:Serve|...}`、`{Prop:...}`、`{Position:...}`、`{Event:...}` 已支持。 |
 | TTS 朗读标签 | ✅ 已修复 | `generate_audio.py` 漏过滤 `{Ball:...}`/`{Prop:...}`/`{Position:...}`/`{Event:...}`，导致 TTS 读出英文参数。v0.1.6 已修复。 |
-| BGM 素材缺失 | ⚠️ 待补充 | `assets/audio/music/` 为空，需放入 WAV 素材。不影响出片（自动跳过）。 |
-| 对话自然度 | ⚠️ 待优化 | 用户反馈「必中球拍」梗的对话仍不够自然。 |
+| BGM 素材缺失 | ✅ 已修复 | `generate_bgm.py` 支持 procedural ADSR 合成回退，无需手动素材即可出片。 |
+| SFX 自动调度 | ✅ 已落地 | `generate_audio.py` 从 story events 自动提取并调度 SFX。 |
+| 对话自然度 | ⚠️ 可优化 | 「必中球拍」梗的对话仍不够自然（属于内容层问题）。 |
 | 球拍可见性 | ⚠️ 可优化 | 哆啦A梦身体较圆，球拍有时被遮挡。 |
+| 相机距离过近 | ⚠️ 可优化 | `CloseUp`/`TrackingCloseUp` 在某些机位距离过近（如 shot 02、07）。 |
+| 追踪遮挡 | ⚠️ 可优化 | `TrackingCloseUp` 在 ParkScene 中可能落入树木后方（如 shot 38）。 |
+| 低角度遮挡 | ⚠️ 可优化 | 低机位时路灯/喷泉可能阻挡画面（如 shot 45）。 |
+| 角色扁平感 | ⚠️ 可优化 | Low-poly 角色在正上/正下方视角呈现"十字"形状（如 shot 25）。 |
 
 ---
 
@@ -319,7 +364,7 @@ cd dula-story
 npm install https://github.com/orange9angel/dula-engine/releases/download/v0.1.3/dula-engine-0.1.3.tgz
 
 # 方式 B：修改 package.json 后 install
-# "dependencies": { "dula-engine": "https://github.com/.../dula-engine-0.1.3.tgz" }
+# "dependencies": { "dula-engine": "https://github.com/.../dula-engine-0.1.7.tgz" }
 npm install
 ```
 
