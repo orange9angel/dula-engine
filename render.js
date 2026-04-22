@@ -58,6 +58,13 @@ async function renderFrames() {
   const PREWARM_TIME = Math.max(0, startTime - 0.5);
   storyboard.update(PREWARM_TIME);
 
+  // Wait for async scene assets (e.g., GLTF models) to finish loading
+  if (storyboard.currentScene && storyboard.currentScene.readyPromise) {
+    console.log('[Render] Waiting for scene async assets...');
+    await storyboard.currentScene.readyPromise;
+    console.log('[Render] Scene assets ready.');
+  }
+
   let lastSceneName = null;
   let fadeRemaining = 0; // frames remaining for fade-in from black
   const FADE_LENGTH = 10;

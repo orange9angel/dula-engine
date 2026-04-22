@@ -109,6 +109,9 @@ server.listen(PORT, async () => {
     await window.loadStoryboard();
   });
 
+  // Extra wait for GLTF models to load (Draco decoding can take 2-3s)
+  await new Promise((r) => setTimeout(r, 4000));
+
   // Parse story to determine shot times
   const storyPath = path.join(EPISODE_DIR, 'script.story');
   const storyText = fs.readFileSync(storyPath, 'utf-8');
