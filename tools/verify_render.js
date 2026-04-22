@@ -37,6 +37,9 @@ window.loadStoryboard = async () => {
 };
 
 window.captureAtTime = async (time) => {
+  // Pre-warm: seek to just before time to initialize moves/animations state
+  const PREWARM_TIME = Math.max(0, time - 0.5);
+  storyboard.update(PREWARM_TIME);
   storyboard.update(time);
   storyboard.render();
   return renderer.domElement.toDataURL('image/jpeg', 0.92);

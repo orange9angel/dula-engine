@@ -11,13 +11,52 @@ const __dirname = path.dirname(__filename);
 const PORT = 8765;
 const FPS = 30;
 
-// Resolve episode path from CLI argument
-const EPISODE = process.argv[2] || '.';
+// Parse CLI arguments: node generate_video.js <episode> [--start N] [--duration N] [--frame-start N] [--frame-end N]
+function parseArgs(argv) {
+  let episode = '.';
+  let start = 0;
+  let duration = 0;
+  let frameStart = -1;
+  let frameEnd = -1;
+
+  for (let i = 2; i < argv.length; i++) {
+    if (argv[i] === '--start') {
+      start = parseFloat(argv[++i]) || 0;
+    } else if (argv[i] === '--duration') {
+      duration = parseFloat(argv[++i]) || 0;
+    } else if (argv[i] === '--frame-start') {
+      const val = parseInt(argv[++i]);
+      frameStart = Number.isNaN(val) ? -1 : val;
+    } else if (argv[i] === '--frame-end') {
+      const val = parseInt(argv[++i]);
+      frameEnd = Number.isNaN(val) ? -1 : val;
+    } else if (!argv[i].startsWith('--')) {
+      episode = argv[i];
+    }
+  }
+  return { episode, start, duration, frameStart, frameEnd };
+}
+
+const args = parseArgs(process.argv);
+const EPISODE = args.episode;
+const SEGMENT_START = args.start;
+const SEGMENT_DURATION = args.duration;
+const FRAME_START = args.frameStart;
+const FRAME_END = args.frameEnd;
+
 const EPISODE_DIR = path.isAbsolute(EPISODE) ? EPISODE : path.resolve(process.cwd(), EPISODE);
 
 const FRAMES_DIR = path.join(EPISODE_DIR, 'storyboard', 'frames');
 const MIXED_AUDIO = path.join(EPISODE_DIR, 'assets', 'audio', 'mixed.wav');
-const OUTPUT_VIDEO = path.join(EPISODE_DIR, 'output', 'output.mp4');
+
+// Output filename includes segment range if rendering a segment
+let segmentSuffix = '';
+if (FRAME_START >= 0 && FRAME_END >= 0) {
+  segmentSuffix = `_frames_${FRAME_START}-${FRAME_END}`;
+} else if (SEGMENT_DURATION > 0) {
+  segmentSuffix = `_${SEGMENT_START}-${SEGMENT_START + SEGMENT_DURATION}`;
+}
+const OUTPUT_VIDEO = path.join(EPISODE_DIR, 'output', `output${segmentSuffix}.mp4`);
 
 console.log(`Episode dir: ${EPISODE_DIR}`);
 
@@ -80,8 +119,23 @@ function serveFile(filePath, res) {
 
 async function combineVideo(totalFrames) {
   const framePattern = path.join(FRAMES_DIR, 'frame_%05d.png');
-  const cmd = `ffmpeg -y -framerate ${FPS} -i "${framePattern}" -i "${MIXED_AUDIO}" -c:v libx264 -pix_fmt yuv420p -c:a aac -b:a 192k -shortest "${OUTPUT_VIDEO}"`;
+  let audioInput = '';
+  let audioOpts = '';
+
+  if (fs.existsSync(MIXED_AUDIO)) {
+    if (SEGMENT_DURATION > 0) {
+      // Segment render: trim audio to match segment
+      audioInput = `-i "${MIXED_AUDIO}"`;
+      audioOpts = `-ss ${SEGMENT_START} -t ${SEGMENT_DURATION}`;
+    } else {
+      // Full render: use entire audio
+      audioInput = `-i "${MIXED_AUDIO}"`;
+    }
+  }
+
+  const cmd = `ffmpeg -y -framerate ${FPS} -i "${framePattern}" ${audioOpts} ${audioInput} -c:v libx264 -pix_fmt yuv420p -c:a aac -b:a 192k -shortest "${OUTPUT_VIDEO}"`;
   console.log('Combining frames and audio with ffmpeg...');
+  console.log(`Command: ${cmd}`);
   execSync(cmd, { stdio: 'inherit' });
 }
 
@@ -115,25 +169,64 @@ server.listen(PORT, async () => {
 
   let totalFrames = 0;
   let renderDone = false;
+  let expectedTotalFrames;
+  if (FRAME_START >= 0 && FRAME_END >= 0) {
+    expectedTotalFrames = FRAME_END - FRAME_START + 1;
+  } else if (SEGMENT_DURATION > 0) {
+    expectedTotalFrames = Math.ceil(SEGMENT_DURATION * FPS);
+  } else {
+    expectedTotalFrames = null;
+  }
+  const renderStartTime = Date.now();
+  let frameOffset = 0;
+
+  function formatProgress(idx) {
+    const elapsed = (Date.now() - renderStartTime) / 1000;
+    const renderFps = idx / elapsed;
+    const absFrame = idx + frameOffset;
+    if (!expectedTotalFrames) {
+      return `frame=${String(absFrame).padStart(5)} fps=${renderFps.toFixed(1)}`;
+    }
+    const progress = (idx / expectedTotalFrames * 100).toFixed(1);
+    const barLen = 30;
+    const filled = Math.round(idx / expectedTotalFrames * barLen);
+    const bar = '█'.repeat(filled) + '░'.repeat(barLen - filled);
+    const eta = (expectedTotalFrames - idx) / renderFps;
+    const etaMin = Math.floor(eta / 60);
+    const etaSec = Math.floor(eta % 60);
+    return `frame=${String(absFrame).padStart(5)}/${String(expectedTotalFrames + frameOffset).padStart(5)} fps=${renderFps.toFixed(1)} ${bar} ${progress}% ETA ${etaMin}m${etaSec.toString().padStart(2,'0')}s`;
+  }
 
   await page.exposeFunction('saveFrame', (idx, base64Data) => {
     const buffer = Buffer.from(base64Data, 'base64');
     const filename = path.join(FRAMES_DIR, `frame_${String(idx).padStart(5, '0')}.png`);
     fs.writeFileSync(filename, buffer);
-    if (idx % 30 === 0) {
-      console.log(`Rendered ${idx} frames...`);
-    }
+    process.stdout.write('\r' + formatProgress(idx));
   });
 
   await page.exposeFunction('onRenderComplete', (frameCount) => {
     totalFrames = frameCount;
     renderDone = true;
+    process.stdout.write('\n');
+  });
+
+  await page.exposeFunction('setFrameOffset', (offset) => {
+    frameOffset = offset;
   });
 
   page.on('console', (msg) => console.log('PAGE LOG:', msg.text()));
   page.on('pageerror', (err) => console.error('PAGE ERROR:', err.message));
 
-  await page.goto(`http://localhost:${PORT}/render.html`, {
+  let renderUrl;
+  if (FRAME_START >= 0 && FRAME_END >= 0) {
+    const timeStart = FRAME_START / FPS;
+    const timeDuration = (FRAME_END - FRAME_START + 1) / FPS;
+    renderUrl = `http://localhost:${PORT}/render.html?start=${timeStart}&duration=${timeDuration}&frameOffset=${FRAME_START}`;
+  } else {
+    renderUrl = `http://localhost:${PORT}/render.html?start=${SEGMENT_START}&duration=${SEGMENT_DURATION}`;
+  }
+  console.log(`Rendering: ${renderUrl}`);
+  await page.goto(renderUrl, {
     waitUntil: 'networkidle2',
   });
 

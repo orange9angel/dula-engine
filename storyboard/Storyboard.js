@@ -145,6 +145,21 @@ export class Storyboard {
           });
         }
       }
+      if (entry.dunkEvents) {
+        for (const de of entry.dunkEvents) {
+          this.storyEvents.push({
+            type: 'dunk',
+            character: entry.character || de.options.character,
+            startTime: entry.startTime,
+            hoop: de.options.hoop || 'north',
+            jumpHeight: de.options.jumpHeight,
+            hangTime: de.options.hangTime,
+            approachAngle: de.options.approachAngle,
+            runUpDistance: de.options.runUpDistance,
+            releaseHeight: de.options.releaseHeight,
+          });
+        }
+      }
     }
 
     // Initialize first scene if specified
@@ -292,6 +307,11 @@ export class Storyboard {
 
     // Tennis ball & swing choreography is handled in switchScene('ParkScene')
     // via CourtDirector, so that trajectories are computed from actual positions.
+
+    // BasketballArenaScene dunk choreography: must run AFTER characters are spawned
+    if (this.currentSceneName === 'BasketballArenaScene') {
+      this._setupDunkEvents();
+    }
   }
 
   switchScene(sceneName, skipArrange = false) {
@@ -399,6 +419,7 @@ export class Storyboard {
       // Precompute all ball events from CourtDirector
       this._setupParkBallEvents();
     }
+
   }
 
   playCameraMove(MoveClass, startTime, duration, options = {}) {
@@ -483,6 +504,89 @@ export class Storyboard {
           char.playAnimation(AnimClass, ev.startTime, ev.duration);
         }
       }
+    }
+  }
+
+  /**
+   * Precompute dunk trajectories and queue moves/animations for BasketballArenaScene.
+   * Called once inside switchScene('BasketballArenaScene').
+   */
+  _setupDunkEvents() {
+    const DunkDirector = DirectorRegistry['DunkDirector'];
+    const courtGeom = this.currentScene.getCourtGeometry ? this.currentScene.getCourtGeometry() : null;
+    if (!DunkDirector || !courtGeom) return;
+
+    const dd = new DunkDirector(courtGeom);
+    const dunkEventsCfg = this.storyEvents.filter((ev) => ev.type === 'dunk');
+    if (!dunkEventsCfg.length) return;
+
+    const RunAnim = AnimationRegistry['Run'];
+    const DunkReachAnim = AnimationRegistry['DunkReach'];
+
+    for (const cfg of dunkEventsCfg) {
+      const char = this.characters.get(cfg.character);
+      if (!char) continue;
+
+      const startPos = {
+        x: char.mesh.position.x,
+        y: char.mesh.position.y,
+        z: char.mesh.position.z,
+      };
+      const hoopPos = this.currentScene.getHoopPosition(cfg.hoop);
+
+      const traj = dd.computeDunkTrajectory(cfg.character, startPos, hoopPos, {
+        jumpHeight: cfg.jumpHeight,
+        hangTime: cfg.hangTime,
+        approachAngle: cfg.approachAngle,
+        runUpDistance: cfg.runUpDistance,
+        releaseHeight: cfg.releaseHeight,
+      });
+
+      if (!traj) continue;
+
+      // Queue character path moves
+      const path = traj.characterPath;
+      for (let i = 0; i < path.length - 1; i++) {
+        const a = path[i];
+        const b = path[i + 1];
+        char.moveTo(
+          { x: b.x, y: b.y, z: b.z },
+          cfg.startTime + a.time,
+          b.time - a.time
+        );
+      }
+
+      // Queue run animation during run-up
+      if (RunAnim && traj.timings.runUpEnd > 0.3) {
+        char.playAnimation(RunAnim, cfg.startTime, traj.timings.runUpEnd);
+      }
+
+      // Queue arm animation (DunkReach)
+      if (DunkReachAnim && traj.armSchedule.length > 0) {
+        const arm = traj.armSchedule[0];
+        // Store target angles for the animation to read
+        char.userData = char.userData || {};
+        char.userData.targetArmAngleX = arm.armAngleX;
+        char.userData.targetArmAngleZ = arm.armAngleZ;
+        char.playAnimation(DunkReachAnim, cfg.startTime + arm.startTime, arm.endTime - arm.startTime);
+      }
+
+      // Queue basketball trajectory on scene
+      if (this.currentScene.setBasketballTrajectory && traj.ballPath.length > 0) {
+        this.currentScene.setBasketballTrajectory(cfg.startTime, traj.ballPath);
+      }
+
+      // Pass dunk time window to scene for flashbulb effects and rim bend
+      if (this.currentScene.setDunkWindow) {
+        this.currentScene.setDunkWindow(
+          cfg.startTime,
+          cfg.startTime + traj.totalDuration,
+          cfg.hoop,
+          cfg.startTime + traj.timings.releaseTime
+        );
+      }
+
+      console.log(`[DunkDirector] ${cfg.character} dunk to ${cfg.hoop}: total=${traj.totalDuration.toFixed(2)}s, release@${(cfg.startTime + traj.timings.releaseTime).toFixed(2)}s`);
     }
   }
 

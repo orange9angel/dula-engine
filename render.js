@@ -5,6 +5,12 @@ const width = 1920;
 const height = 1080;
 const fps = 30;
 
+// Parse segment parameters from URL query string
+const urlParams = new URLSearchParams(window.location.search);
+const SEGMENT_START = parseFloat(urlParams.get('start') || '0');
+const SEGMENT_DURATION = parseFloat(urlParams.get('duration') || '0'); // 0 means render all
+const FRAME_OFFSET = parseInt(urlParams.get('frameOffset') || '0');
+
 const renderer = new THREE.WebGLRenderer({ antialias: true, preserveDrawingBuffer: true });
 renderer.setSize(width, height);
 renderer.setPixelRatio(1);
@@ -30,13 +36,36 @@ async function renderFrames() {
   await storyboard.load('/episode/script.story', '/episode/assets/audio/manifest.json');
 
   const totalDuration = Math.max(...storyboard.entries.map((e) => e.endTime)) + 1.5;
-  const totalFrames = Math.ceil(totalDuration * fps);
+
+  // Determine render range
+  const startTime = SEGMENT_START;
+  const endTime = SEGMENT_DURATION > 0
+    ? Math.min(startTime + SEGMENT_DURATION, totalDuration)
+    : totalDuration;
+
+  const startFrame = Math.floor(startTime * fps);
+  const endFrame = Math.ceil(endTime * fps);
+  const segmentFrames = endFrame - startFrame;
+
+  console.log(`[Segment] start=${startTime}s, duration=${endTime - startTime}s, frames=${segmentFrames}, frameOffset=${FRAME_OFFSET}`);
+  if (window.setFrameOffset) {
+    window.setFrameOffset(FRAME_OFFSET);
+  }
+
+  // Pre-warm: seek to just before startTime to initialize moves/animations state
+  // This fixes the issue where moves that began before startTime would have
+  // incorrect startPos snapshot when rendered mid-segment.
+  const PREWARM_TIME = Math.max(0, startTime - 0.5);
+  storyboard.update(PREWARM_TIME);
 
   let lastSceneName = null;
   let fadeRemaining = 0; // frames remaining for fade-in from black
   const FADE_LENGTH = 10;
 
-  for (let i = 0; i < totalFrames; i++) {
+  // Only apply fade if this is the very beginning of the video
+  const isFirstSegment = startTime <= 0;
+
+  for (let i = startFrame; i < endFrame; i++) {
     const t = i / fps;
     storyboard.update(t);
 
@@ -60,10 +89,17 @@ async function renderFrames() {
 
     const dataUrl = renderer.domElement.toDataURL('image/png');
     const base64 = dataUrl.split(',')[1];
-    await window.saveFrame(i + 1, base64);
+    // Frame index is 1-based relative to the segment (for ffmpeg pattern matching)
+    const frameIdx = i - startFrame + 1;
+    const absFrameIdx = frameIdx + FRAME_OFFSET;
+    await window.saveFrame(absFrameIdx, base64);
+    // Also log absolute frame number for debugging
+    if (frameIdx % 30 === 0 || frameIdx === segmentFrames) {
+      console.log(`[Render] frame ${absFrameIdx} (segment ${frameIdx}/${segmentFrames})`);
+    }
   }
 
-  window.onRenderComplete(totalFrames);
+  window.onRenderComplete(segmentFrames);
 }
 
 renderFrames().catch((err) => {

@@ -376,9 +376,59 @@ def schedule_sfx_from_events(story_events, manual_sfx):
                 if sfx_file:
                     scheduled.append({"file": sfx_file, "startTime": t})
 
+        elif etype == "Dunk":
+            # Parse dunk parameters and estimate slam time using physics
+            jh_match = re.search(r"jumpHeight=([\d.]+)", body)
+            ht_match = re.search(r"hangTime=([\d.]+)", body)
+            ru_match = re.search(r"runUpDistance=([\d.]+)", body)
+            jump_h = float(jh_match.group(1)) if jh_match else 3.5
+            hang_t = float(ht_match.group(1)) if ht_match else 0.5
+            run_d = float(ru_match.group(1)) if ru_match else 4.0
+            g = 9.8
+            run_up = max(1.0, run_d / 4.0)
+            v0 = (2 * g * jump_h) ** 0.5
+            ascent = v0 / g
+            peak = run_up + ascent
+            hang_end = peak + hang_t
+            fall_dist = max(0.01, jump_h - 3.05)
+            descent = (2 * fall_dist / g) ** 0.5
+            slam_time = t + hang_end + descent
+            # Schedule whoosh at takeoff and dunk_slam at rim contact
+            whoosh_file = find_sfx("whoosh", "swoosh")
+            if whoosh_file:
+                scheduled.append({"file": whoosh_file, "startTime": t + run_up})
+            dunk_file = find_sfx("dunk_slam", "dunk", "slam")
+            if dunk_file:
+                scheduled.append({"file": dunk_file, "startTime": slam_time})
+
         elif etype == "Scene":
             # Scene transitions can trigger ambient changes
             pass  # Ambient is handled separately if needed
+
+        elif etype == "SFX":
+            # Parse SFX body: Play|name=xxx|offset=1.5
+            sfx_name = None
+            offset = 0.0
+            if "|" in body:
+                parts = body.split("|")
+                if parts[0] == "Play" and len(parts) > 1:
+                    for p in parts[1:]:
+                        if "=" in p:
+                            k, v = p.split("=", 1)
+                            k = k.strip()
+                            v = v.strip()
+                            if k == "name":
+                                sfx_name = v
+                            elif k == "offset":
+                                try:
+                                    offset = float(v)
+                                except ValueError:
+                                    pass
+            if not sfx_name:
+                sfx_name = body
+            sfx_file = find_sfx(sfx_name)
+            if sfx_file:
+                scheduled.append({"file": sfx_file, "startTime": t + offset})
 
     return scheduled
 
@@ -558,13 +608,15 @@ def mix_audio(manifest, bgm_path=None, sfx_events=None):
     if sfx_events:
         inputs = []
         filters = []
+        n_sfx = len(sfx_events)
         for i, sfx in enumerate(sfx_events):
             inputs.append(f'-i "{sfx["file"]}"')
             delay_ms = int(round(sfx["startTime"] * 1000))
-            filters.append(f"[{i}:a]adelay={delay_ms}|{delay_ms}[s{i}]")
+            # Pre-scale each SFX to compensate for amix normalize
+            filters.append(f"[{i}:a]adelay={delay_ms}|{delay_ms},volume={n_sfx}[s{i}]")
 
-        amix_inputs = "".join(f"[s{i}]" for i in range(len(sfx_events)))
-        amix = f"{amix_inputs}amix=inputs={len(sfx_events)}:duration=longest[sfxout]"
+        amix_inputs = "".join(f"[s{i}]" for i in range(n_sfx))
+        amix = f"{amix_inputs}amix=inputs={n_sfx}:duration=longest:normalize=0[sfxout]"
         filter_complex = ";".join(filters + [amix])
 
         cmd = f'ffmpeg -y {" ".join(inputs)} -filter_complex "{filter_complex}" -map "[sfxout]" -acodec pcm_s16le -ar 48000 "{sfx_path}"'
@@ -590,7 +642,7 @@ def mix_audio(manifest, bgm_path=None, sfx_events=None):
 
     if sfx_path:
         final_inputs.append(f'-i "{sfx_path}"')
-        final_filters.append(f"[{stream_idx}:a]volume=1.0[sfx{stream_idx}]")
+        final_filters.append(f"[{stream_idx}:a]volume=3.0[sfx{stream_idx}]")
         stream_idx += 1
 
     if stream_idx == 0:
@@ -601,7 +653,7 @@ def mix_audio(manifest, bgm_path=None, sfx_events=None):
         label = "dialogue" if i == 0 and dialogue_path else ("bgm" if i == (1 if dialogue_path else 0) and bgm_path else "sfx")
         amix_inputs += f"[{label}{i}]"
 
-    amix = f"{amix_inputs}amix=inputs={stream_idx}:duration=longest[outa]"
+    amix = f"{amix_inputs}amix=inputs={stream_idx}:duration=longest:normalize=0[outa]"
     filter_complex = ";".join(final_filters + [amix])
 
     cmd = f'ffmpeg -y {" ".join(final_inputs)} -filter_complex "{filter_complex}" -map "[outa]" -acodec pcm_s16le -ar 48000 "{mixed_path}"'
