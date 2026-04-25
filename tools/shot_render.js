@@ -1,5 +1,5 @@
 import * as THREE from 'three';
-import { Storyboard } from '../storyboard/Storyboard.js';
+import { Storyboard } from 'dula-engine';
 
 const width = 1920;
 const height = 1080;
@@ -28,6 +28,12 @@ window.fetch = async (url, ...args) => {
 };
 
 async function init() {
+  // Load Story bootstrap (registers assets + custom plugins)
+  try {
+    await import('../episode/bootstrap.js');
+  } catch (e) {
+    console.warn('No bootstrap.js found, running with empty registries:', e.message);
+  }
   await storyboard.load('../episode/script.story', '../episode/assets/audio/manifest.json');
   window.storyboardReady = true;
 }

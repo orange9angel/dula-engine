@@ -43,6 +43,15 @@ const server = http.createServer((req, res) => {
   if (reqPath.startsWith('/episode/')) {
     const relPath = reqPath.slice('/episode/'.length);
     const filePath = path.join(EPISODE_DIR, relPath);
+    console.log('[Server] Episode request:', reqPath, '->', filePath);
+    serveFile(filePath, res);
+    return;
+  }
+
+  // Serve node_modules from story root (current working directory)
+  if (reqPath.startsWith('/node_modules/')) {
+    const storyRoot = process.cwd();
+    const filePath = path.join(storyRoot, reqPath);
     serveFile(filePath, res);
     return;
   }
@@ -53,6 +62,11 @@ const server = http.createServer((req, res) => {
 });
 
 function serveFile(filePath, res) {
+  console.log('[Server] Serving:', filePath);
+  // CORS headers for module imports
+  res.setHeader('Access-Control-Allow-Origin', '*');
+  res.setHeader('Access-Control-Allow-Methods', 'GET, OPTIONS');
+  res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
   const ext = path.extname(filePath).toLowerCase();
   const mimeTypes = {
     '.html': 'text/html',
