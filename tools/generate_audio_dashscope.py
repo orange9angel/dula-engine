@@ -1,21 +1,21 @@
 #!/usr/bin/env python3
 """
-Generate audio files from SRT using Alibaba Cloud DashScope CosyVoice API.
-This script provides higher-quality, more characterful TTS voices compared
-to edge-tts, at the cost of requiring a DashScope API key.
+Generate audio files from SRT using Alibaba Cloud DashScope Sambert API.
+This script provides high-quality Chinese TTS voices compared to edge-tts,
+at the cost of requiring a DashScope API key.
 
 Usage:
     1. Get a free API key from https://dashscope.console.aliyun.com/
     2. Set environment variable: $env:DASHSCOPE_API_KEY="your-key"
-    3. Run: python tools/generate_audio_dashscope.py
+    3. Run: python tools/generate_audio_dashscope.py <episode-dir>
 
 If the API key is missing or the API call fails, the script falls back to
 edge-tts automatically.
 
-Recommended CosyVoice presets for this project:
-    - Doraemon : longxiaochun  (活泼女声，模拟原版女配音员的高亢风格)
-    - Nobita   : longxiaocheng (年轻男声，懦弱少年感)
-    - Shizuka  : longxiaoxia   (温柔女声)
+Recommended Sambert presets for this project:
+    - Doraemon : sambert-zhimao-v1   (知猫 — 活泼女声，模拟原版女配音员的高亢风格)
+    - Nobita   : sambert-zhishuo-v1  (知硕 — 年轻男声，懦弱少年感)
+    - Shizuka  : sambert-zhixia-v1   (知夏 — 温柔女声)
 """
 
 import asyncio
@@ -29,9 +29,11 @@ import sys
 import wave
 
 try:
-    import requests
+    import dashscope
+    from dashscope.audio.tts import SpeechSynthesizer
 except ImportError:
-    requests = None
+    dashscope = None
+    SpeechSynthesizer = None
 
 # Add project root to path for importing lib if needed
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -39,7 +41,9 @@ ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 # Resolve episode path from CLI argument
 EPISODE = sys.argv[1] if len(sys.argv) > 1 else os.path.join(ROOT, "content", "episodes", "bichong_qiupai")
 if not os.path.isabs(EPISODE):
-    EPISODE = os.path.join(ROOT, EPISODE)
+    # Relative to current working directory (where npm script is run)
+    EPISODE = os.path.join(os.getcwd(), EPISODE)
+EPISODE = os.path.normpath(EPISODE)
 
 STORY_PATH = os.path.join(EPISODE, "script.story")
 OUTPUT_DIR = os.path.join(EPISODE, "assets", "audio")
@@ -50,26 +54,37 @@ SFX_DIR = os.path.join(OUTPUT_DIR, "sfx")
 TENNIS_HIT_TIMES = [30.0, 32.5]
 
 DASHSCOPE_API_KEY = os.environ.get("DASHSCOPE_API_KEY", "")
-DASHSCOPE_ENDPOINT = "https://dashscope.aliyuncs.com/api/v1/services/audio/tts/speech"
+if DASHSCOPE_API_KEY and dashscope:
+    dashscope.api_key = DASHSCOPE_API_KEY
 
-# CosyVoice preset mapping — feel free to change these via env vars
-VOICE_MAP = {
+# Load voice config from episode's voice_config.json if present
+VOICE_CONFIG_PATH = os.path.join(EPISODE, "voice_config.json")
+VOICE_MAP = {}
+if os.path.exists(VOICE_CONFIG_PATH):
+    with open(VOICE_CONFIG_PATH, "r", encoding="utf-8") as f:
+        voice_cfg = json.load(f)
+    for char, cfg in voice_cfg.get("voices", {}).items():
+        provider = cfg.get("provider", "dashscope")
+        if provider == "dashscope":
+            VOICE_MAP[char] = {"model": cfg.get("model", "sambert-zhimao-v1")}
+        else:
+            VOICE_MAP[char] = {"model": cfg.get("model", cfg.get("voice", "zh-CN-XiaoxiaoNeural"))}
+
+# Default Sambert preset mapping — feel free to change these via env vars
+DEFAULT_VOICE_MAP = {
     "Doraemon": {
-        "voice": os.environ.get("VOICE_DORAEMON", "longxiaochun"),
-        "rate": 1.2,   # speed multiplier (0.5 ~ 2.0)
-        "pitch": 0,    # pitch shift in semitones (-12 ~ 12)
+        "model": os.environ.get("VOICE_DORAEMON", "sambert-zhimao-v1"),   # 知猫 — 活泼女声
     },
     "Nobita": {
-        "voice": os.environ.get("VOICE_NOBITA", "longxiaocheng"),
-        "rate": 1.0,
-        "pitch": -2,
+        "model": os.environ.get("VOICE_NOBITA", "sambert-zhishuo-v1"),   # 知硕 — 年轻男声
     },
     "Shizuka": {
-        "voice": os.environ.get("VOICE_SHIZUKA", "longxiaoxia"),
-        "rate": 1.0,
-        "pitch": 2,
+        "model": os.environ.get("VOICE_SHIZUKA", "sambert-zhimao-v1"),   # 知猫 — 活泼女声（zhixia 暂不可用）
     },
 }
+for char, cfg in DEFAULT_VOICE_MAP.items():
+    if char not in VOICE_MAP:
+        VOICE_MAP[char] = cfg
 
 # Fallback edge-tts config (used when DashScope is unavailable)
 EDGE_VOICE_MAP = {
@@ -183,42 +198,43 @@ def get_mp3_duration(mp3_path):
         return None
 
 
-def generate_with_dashscope(text, voice, rate=1.0, pitch=0, output_path=None):
-    """Call DashScope CosyVoice API. Returns bytes on success, None on failure."""
-    if not DASHSCOPE_API_KEY or requests is None:
-        return None
-
-    payload = {
-        "model": "cosyvoice-v1",
-        "input": {"text": text},
-        "parameters": {
-            "voice": voice,
-            "format": "mp3",
-            "sample_rate": 24000,
-        },
-    }
+def generate_with_dashscope(text, model, output_path=None):
+    """Call DashScope Sambert API. Returns True on success, False on failure."""
+    if not DASHSCOPE_API_KEY or SpeechSynthesizer is None:
+        return False
 
     try:
-        resp = requests.post(
-            DASHSCOPE_ENDPOINT,
-            headers={
-                "Authorization": f"Bearer {DASHSCOPE_API_KEY}",
-                "Content-Type": "application/json",
-            },
-            json=payload,
-            timeout=60,
+        result = SpeechSynthesizer.call(
+            model=model,
+            text=text,
+            sample_rate=48000,
         )
-        if resp.status_code == 200:
+        if result.get_audio_data():
             if output_path:
                 with open(output_path, "wb") as f:
-                    f.write(resp.content)
-            return resp.content
+                    f.write(result.get_audio_data())
+                # Fix broken WAV header from DashScope (nFrames is set to 0x7FFFFFFF)
+                _fix_wav_header(output_path)
+            return True
         else:
-            print(f"  DashScope API error: {resp.status_code} - {resp.text[:200]}")
-            return None
+            print(f"  DashScope API returned empty audio")
+            return False
     except Exception as e:
         print(f"  DashScope request failed: {e}")
-        return None
+        return False
+
+
+def _fix_wav_header(wav_path):
+    """Re-encode WAV to fix incorrect header from DashScope API."""
+    temp_path = wav_path + ".fixed.wav"
+    cmd = f'ffmpeg -y -i "{wav_path}" -acodec pcm_s16le -ar 48000 -ac 1 "{temp_path}"'
+    try:
+        subprocess.run(cmd, shell=True, check=True, capture_output=True)
+        os.replace(temp_path, wav_path)
+    except subprocess.CalledProcessError:
+        # If ffmpeg fails, remove temp file and keep original
+        if os.path.exists(temp_path):
+            os.remove(temp_path)
 
 
 async def generate_with_edgetts(text, voice, rate, pitch, volume, output_path):
@@ -259,16 +275,25 @@ def generate_tennis_hit_sfx(filepath):
 
 
 def check_bgm_files(cues):
-    music_dir = os.path.join(OUTPUT_DIR, "music")
+    # Check episode's materials/bgm/ first, then assets/audio/music/
+    search_dirs = [
+        os.path.join(EPISODE, "materials", "bgm"),
+        os.path.join(EPISODE, "assets", "audio", "music"),
+    ]
     missing = []
     for cue in cues:
-        file_path = os.path.join(music_dir, f"{cue['name']}.wav")
-        if not os.path.exists(file_path):
+        found = False
+        for music_dir in search_dirs:
+            file_path = os.path.join(music_dir, f"{cue['name']}.wav")
+            if os.path.exists(file_path):
+                found = True
+                break
+        if not found:
             missing.append(cue['name'])
     if missing:
         print(f"\n[WARNING] Missing BGM files: {missing}")
         print("Please download high-quality music tracks and place them in:")
-        print(f"  {music_dir}\n")
+        print(f"  {os.path.join(EPISODE, 'materials', 'bgm')}\n")
     return len(missing) == 0
 
 
@@ -300,7 +325,13 @@ def mix_bgm_track(cues, entries, duration, sample_rate=48000):
         duck_events = merged
 
     for cue in cues:
-        file_path = os.path.join(ROOT, "assets", "audio", "music", f"{cue['name']}.wav")
+        # Look for BGM in episode's materials/bgm/ first, then episode's assets/audio/music/
+        file_path = os.path.join(EPISODE, "materials", "bgm", f"{cue['name']}.wav")
+        if not os.path.exists(file_path):
+            file_path = os.path.join(EPISODE, "assets", "audio", "music", f"{cue['name']}.wav")
+        if not os.path.exists(file_path):
+            # Fallback to legacy dula-assets location
+            file_path = os.path.join(ROOT, "assets", "audio", "music", f"{cue['name']}.wav")
         if not os.path.exists(file_path):
             print(f"Warning: BGM file not found: {file_path}")
             continue
@@ -393,7 +424,7 @@ def mix_audio(manifest, bgm_path=None, sfx_events=None):
     filters = []
     stream_idx = 0
     for entry in entries:
-        file_path = os.path.join(ROOT, entry["file"])
+        file_path = os.path.join(OUTPUT_DIR, entry["file"])
         inputs.append(f'-i "{file_path}"')
         delay_ms = int(round(entry["startTime"] * 1000))
         filters.append(f"[{stream_idx}:a]adelay={delay_ms}|{delay_ms}[ad{stream_idx}]")
@@ -443,7 +474,7 @@ async def generate():
 
     use_dashscope = bool(DASHSCOPE_API_KEY)
     if use_dashscope:
-        print("Using DashScope CosyVoice API for TTS generation.")
+        print("Using DashScope Sambert API for TTS generation.")
         print("(Set DASHSCOPE_API_KEY env var to use this; otherwise falls back to edge-tts)")
     else:
         print("DASHSCOPE_API_KEY not set. Falling back to edge-tts.")
@@ -459,7 +490,9 @@ async def generate():
         if not char or not dialogue:
             continue
 
-        filename = f"{entry['index']:03d}_{char}.mp3"
+        # Sambert outputs WAV, edge-tts outputs MP3
+        ext = "wav" if use_dashscope else "mp3"
+        filename = f"{entry['index']:03d}_{char}.{ext}"
         filepath = os.path.join(OUTPUT_DIR, filename)
 
         if use_dashscope:
@@ -467,20 +500,23 @@ async def generate():
             if not cfg:
                 print(f"Warning: no voice config for {char}, skipping.")
                 continue
-            print(f"Generating {filename} via DashScope (voice={cfg['voice']})...")
+            print(f"Generating {filename} via DashScope (model={cfg['model']})...")
             result = generate_with_dashscope(
                 dialogue,
-                cfg["voice"],
+                cfg["model"],
                 output_path=filepath,
             )
-            if result is None:
-                print(f"  DashScope failed for {filename}, falling back to edge-tts...")
-                use_dashscope = False
+            if not result:
+                print(f"  DashScope failed for {filename}, falling back to edge-tts for this line...")
+                # Don't disable dashscope globally - just fallback for this one line
                 try:
                     import edge_tts
                 except ImportError:
                     print("Please install edge-tts: pip install edge-tts")
                     sys.exit(1)
+                # Fallback to mp3
+                filename = f"{entry['index']:03d}_{char}.mp3"
+                filepath = os.path.join(OUTPUT_DIR, filename)
                 cfg = EDGE_VOICE_MAP.get(char)
                 if cfg:
                     await generate_with_edgetts(

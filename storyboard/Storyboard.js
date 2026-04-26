@@ -6,7 +6,9 @@ import { VoiceRegistry } from '../voices/index.js';
 import { AnimationRegistry } from '../animations/index.js';
 import { CameraMoveRegistry } from '../camera/index.js';
 import { DirectorRegistry } from '../lib/DirectorRegistry.js';
+import { TransitionRegistry } from '../transitions/index.js';
 import { MusicDirector, MusicCue } from '../lib/MusicDirector.js';
+
 
 const DEFAULT_TRANSITIONS = {
   exits: {},
@@ -35,6 +37,8 @@ export class Storyboard {
     this.musicDirector = new MusicDirector();
     this.transitions = DEFAULT_TRANSITIONS;
     this.choreography = null;
+    this.activeTransition = null;
+    this.transitionScene = new THREE.Scene();
   }
 
   async load(storyPath, manifestPath) {
@@ -200,6 +204,20 @@ export class Storyboard {
 
     // Position characters
     this.arrangeCharacters();
+
+    // Apply story props AFTER characters are created and added to scene
+    if (this.storyProps) {
+      for (const p of this.storyProps) {
+        const char = this.characters.get(p.character);
+        if (!char) continue;
+        if (p.type === 'takecopter' && char.attachTakeCopter) {
+          char.attachTakeCopter();
+        }
+        if (p.type === 'letter' && char.attachLetter) {
+          char.attachLetter();
+        }
+      }
+    }
 
     // Queue animations from SRT entries
     for (const entry of this.entries) {
@@ -379,6 +397,9 @@ export class Storyboard {
         if (!char) continue;
         if (p.type === 'takecopter' && char.attachTakeCopter) {
           char.attachTakeCopter();
+        }
+        if (p.type === 'letter' && char.attachLetter) {
+          char.attachLetter();
         }
       }
     }
@@ -663,6 +684,64 @@ export class Storyboard {
       }
     }
 
+    // Transition effects
+    this._updateTransitions(t);
+
+    // Dynamic character add/remove based on speaking time
+    // Characters are added to scene just before their first line and removed after their last line
+    if (this.currentScene) {
+      for (const entry of this.entries) {
+        if (!entry.character) continue;
+        const char = this.characters.get(entry.character);
+        if (!char) continue;
+
+        const isInScene = this.currentScene.characters.includes(char);
+        const isSpeakingWindow = t >= entry.startTime - 0.5 && t <= entry.endTime + 0.3;
+        const isCurrentScene = this.currentSceneName && this.characterScenes.get(entry.character)?.has(this.currentSceneName);
+
+        if (isSpeakingWindow && isCurrentScene && !isInScene) {
+          // Character enters scene just before speaking
+          this.currentScene.addCharacter(char);
+          // Teleport to a reasonable position if no prior position set
+          if (char.mesh.position.x === 0 && char.mesh.position.z === 0) {
+            const charsInScene = this.currentScene.characters.length;
+            if (charsInScene === 1) {
+              char.setPosition(0, 0, 0);
+            } else if (charsInScene === 2) {
+              char.setPosition(1.5, 0, 0);
+            } else {
+              const spacing = 2;
+              const offset = ((charsInScene - 1) * spacing) / 2;
+              char.setPosition((charsInScene - 1) * spacing - offset, 0, 0);
+            }
+            char.mesh.lookAt(0, 1.5, 5);
+          }
+        }
+      }
+
+      // Remove characters whose last line in this scene has ended (with small grace period)
+      for (const [name, char] of this.characters) {
+        if (!this.currentScene.characters.includes(char)) continue;
+        const scenes = this.characterScenes.get(name);
+        if (!scenes || !scenes.has(this.currentSceneName)) continue;
+
+        // Find the last entry for this character in the current scene
+        let lastEndTime = -1;
+        let sceneCursor = this.entries.find((e) => e.scene)?.scene || this.currentSceneName;
+        for (const entry of this.entries) {
+          if (entry.scene) sceneCursor = entry.scene;
+          if (entry.character === name && sceneCursor === this.currentSceneName) {
+            lastEndTime = Math.max(lastEndTime, entry.endTime);
+          }
+        }
+
+        // If current time is past their last line + grace, remove them
+        if (lastEndTime > 0 && t > lastEndTime + 1.0) {
+          this.currentScene.removeCharacter(char);
+        }
+      }
+    }
+
     // Character speaking states
     for (const char of this.characters.values()) {
       char.stopSpeaking();
@@ -675,6 +754,41 @@ export class Storyboard {
           const audioDur = this.audioDurations.get(entry.index);
           const speakDuration = audioDur ? Math.min(audioDur + 0.15, slotDuration) : slotDuration;
           char.speak(entry.startTime, speakDuration);
+        }
+      }
+    }
+
+    // TandemFlight: Xiaoyue rides on Xingzai's back
+    const xingzai = this.characters.get('Xingzai');
+    const xiaoyue = this.characters.get('Xiaoyue');
+    if (xingzai && xiaoyue && xingzai.mesh && xiaoyue.mesh) {
+      // Check if Xingzai is currently playing TandemFlight
+      const isTandemFlying = xingzai.animations.some(
+        (a) => a.instance.name === 'TandemFlight' && t >= a.startTime && t <= a.endTime
+      );
+      if (isTandemFlying) {
+        // Set Xingzai's baseY to flying altitude so the animation keeps him in the air
+        const flyHeight = 4;
+        xingzai.baseY = flyHeight;
+
+        // Position Xiaoyue on Xingzai's back
+        const xzPos = xingzai.mesh.position;
+        const xzRot = xingzai.mesh.rotation.x;
+        // When Xingzai leans forward (rot.x ~ 0.9), his back faces up-backward
+        // Place Xiaoyue lower on his back, not on his head
+        const offsetY = 0.5;  // lower on the back
+        const offsetZ = -0.3; // slightly behind
+        xiaoyue.mesh.position.set(xzPos.x, xzPos.y + offsetY, xzPos.z + offsetZ);
+        xiaoyue.mesh.rotation.x = xzRot;
+
+        // Ensure both are in the scene
+        if (this.currentScene) {
+          if (!this.currentScene.characters.includes(xingzai)) {
+            this.currentScene.addCharacter(xingzai);
+          }
+          if (!this.currentScene.characters.includes(xiaoyue)) {
+            this.currentScene.addCharacter(xiaoyue);
+          }
         }
       }
     }
@@ -776,6 +890,60 @@ export class Storyboard {
         this.outlineEffect.render(this.currentScene.scene, this.camera);
       } else {
         this.renderer.render(this.currentScene.scene, this.camera);
+      }
+    }
+    // Render transition overlay on top
+    if (this.activeTransition && this.activeTransition.overlay) {
+      const autoClear = this.renderer.autoClear;
+      this.renderer.autoClear = false;
+      this.renderer.render(this.transitionScene, this.camera);
+      this.renderer.autoClear = autoClear;
+    }
+  }
+
+  /**
+   * Update active transition effects from SRT entries.
+   */
+  _updateTransitions(t) {
+    // Find active transition entry (transition is active during its own duration, not the whole entry)
+    let activeTransEntry = null;
+    for (const entry of this.entries) {
+      if (entry.transition) {
+        const duration = entry.transition.options.duration ?? 0.5;
+        if (t >= entry.startTime && t <= entry.startTime + duration) {
+          activeTransEntry = entry;
+          break;
+        }
+      }
+    }
+
+    if (activeTransEntry) {
+      const { name, options } = activeTransEntry.transition;
+      const TransClass = TransitionRegistry[name];
+      if (!TransClass) {
+        console.warn(`Transition "${name}" not found in registry.`);
+        return;
+      }
+
+      // Start new transition if needed
+      if (!this.activeTransition || this.activeTransition.name !== name) {
+        // End previous transition if any
+        if (this.activeTransition) {
+          this.activeTransition.end(this.renderer, this.camera, { transitionScene: this.transitionScene });
+        }
+        this.activeTransition = new TransClass(options);
+        this.activeTransition.start(this.renderer, this.camera, { transitionScene: this.transitionScene });
+      }
+
+      // Update progress (0..1 over the transition's own duration)
+      const duration = this.activeTransition.duration;
+      const progress = Math.min(1.0, (t - activeTransEntry.startTime) / duration);
+      this.activeTransition.update(progress, this.renderer, this.camera, { transitionScene: this.transitionScene });
+    } else {
+      // End active transition if time is past
+      if (this.activeTransition) {
+        this.activeTransition.end(this.renderer, this.camera, { transitionScene: this.transitionScene });
+        this.activeTransition = null;
       }
     }
   }

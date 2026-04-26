@@ -72,7 +72,7 @@ const server = http.createServer((req, res) => {
   if (reqPath.startsWith('/episode/')) {
     const relPath = reqPath.slice('/episode/'.length);
     const filePath = path.join(EPISODE_DIR, relPath);
-    serveFile(filePath, res);
+    serveFile(filePath, res, req.url);
     return;
   }
 
@@ -83,7 +83,7 @@ const server = http.createServer((req, res) => {
     if (!fs.existsSync(filePath)) {
       filePath = path.join(process.cwd(), 'node_modules', relPath);
     }
-    serveFile(filePath, res);
+    serveFile(filePath, res, req.url);
     return;
   }
 
@@ -92,7 +92,7 @@ const server = http.createServer((req, res) => {
   serveFile(filePath, res);
 });
 
-function serveFile(filePath, res) {
+function serveFile(filePath, res, urlPath = null) {
   const ext = path.extname(filePath).toLowerCase();
   const mimeTypes = {
     '.html': 'text/html',
@@ -108,11 +108,17 @@ function serveFile(filePath, res) {
 
   fs.readFile(filePath, (err, data) => {
     if (err) {
+      if (urlPath) console.log(`[404] ${urlPath} -> ${filePath}`);
       res.writeHead(404);
       res.end('Not Found');
       return;
     }
-    res.writeHead(200, { 'Content-Type': contentType });
+    res.writeHead(200, {
+      'Content-Type': contentType,
+      'Cache-Control': 'no-cache, no-store, must-revalidate',
+      'Pragma': 'no-cache',
+      'Expires': '0',
+    });
     res.end(data);
   });
 }
@@ -163,9 +169,22 @@ server.listen(PORT, async () => {
       '--no-sandbox',
       '--disable-setuid-sandbox',
       '--autoplay-policy=no-user-gesture-required',
+      '--disable-cache',
+      '--disable-application-cache',
+      '--disable-offline-load-stale-cache',
+      '--disk-cache-size=0',
     ],
   });
   const page = await browser.newPage();
+
+  // Clear all browser data to ensure fresh module loading
+  const client = await page.target().createCDPSession();
+  await client.send('Network.clearBrowserCache');
+  await client.send('Network.clearBrowserCookies');
+  await client.send('Storage.clearDataForOrigin', {
+    origin: `http://localhost:${PORT}`,
+    storageTypes: 'all',
+  });
 
   let totalFrames = 0;
   let renderDone = false;

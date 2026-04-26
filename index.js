@@ -27,3 +27,6 @@ export { VoiceBase, VoiceRegistry, registerVoice } from './voices/index.js';
 
 // Director registry (for CourtDirector and other domain directors)
 export { DirectorRegistry, registerDirector } from './lib/DirectorRegistry.js';
+
+// Transition system
+export { TransitionBase, TransitionRegistry, registerTransition } from './transitions/index.js';

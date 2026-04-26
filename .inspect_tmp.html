@@ -1,0 +1,24 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="UTF-8">
+  <script type="importmap">
+  {
+    "imports": {
+      "three": "https://unpkg.com/three@0.160.0/build/three.module.js",
+      "three/addons/": "https://unpkg.com/three@0.160.0/examples/jsm/"
+    }
+  }
+  </script>
+</head>
+<body>
+  <script type="module">
+    // Expose inspectors globally so Node can call them
+    import { CharacterInspector } from 'D:/opensource/movie/dula-engine/inspectors/CharacterInspector.js';
+    import { SceneInspector } from 'D:/opensource/movie/dula-engine/inspectors/SceneInspector.js';
+    import { AnimationInspector } from 'D:/opensource/movie/dula-engine/inspectors/AnimationInspector.js';
+    import { AVSyncInspector } from 'D:/opensource/movie/dula-engine/inspectors/AVSyncInspector.js';
+    window.__inspectors = { CharacterInspector, SceneInspector, AnimationInspector, AVSyncInspector };
+  </script>
+</body>
+</html>
