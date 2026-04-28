@@ -112,7 +112,8 @@ export class SceneInspector extends InspectorBase {
       { regex: /(飞船|宇宙|太空|星球|外星|母星)/g, theme: '科幻/太空', minCount: 2 },
       { regex: /(雨|下雨|雨天|淋雨)/g, theme: '雨天', minCount: 2 },
       { regex: /(雪|下雪|冬天|寒冷)/g, theme: '雪景/冬天', minCount: 2 },
-      { regex: /(海边|海滩|海洋|沙滩|浪花)/g, theme: '海边/海滩', minCount: 2 },
+      // 海边主题：降低阈值到1，因为"海边"是强场景指示词，出现1次就应触发
+      { regex: /(海边|海滩|海洋|沙滩|浪花|海水|海里|海浪)/g, theme: '海边/海滩', minCount: 1 },
       { regex: /(森林|树林|树木|丛林)/g, theme: '森林', minCount: 2 },
       { regex: /(沙漠|沙丘|荒漠)/g, theme: '沙漠', minCount: 2 },
     ];
@@ -145,8 +146,10 @@ export class SceneInspector extends InspectorBase {
       { theme: '夜晚/星空', trait: '室内', reason: '夜晚/星空主题的故事不应主要发生在室内' },
       { theme: '夜晚/星空', trait: '户外/公园', reason: '夜晚/星空主题需要夜景场景，而非普通公园' },
       { theme: '雨天', trait: '室内', reason: '雨天主题的故事不应完全发生在室内' },
+      // 海边主题：公园/草地不是海边场景
       { theme: '海边/海滩', trait: '室内', reason: '海边主题不应主要发生在室内' },
       { theme: '海边/海滩', trait: '城市街道', reason: '海边主题不应主要发生在城市街道' },
+      { theme: '海边/海滩', trait: '户外/公园', reason: '海边主题需要 BeachScene/SeasideScene 等有海洋元素的场景，ParkScene 没有海' },
       { theme: '森林', trait: '室内', reason: '森林主题不应主要发生在室内' },
       { theme: '森林', trait: '城市街道', reason: '森林主题不应主要发生在城市街道' },
       { theme: '沙漠', trait: '室内', reason: '沙漠主题不应主要发生在室内' },
