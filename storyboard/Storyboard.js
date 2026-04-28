@@ -100,7 +100,9 @@ export class Storyboard {
     this.storyBallEvents = [];
     this.storyEvents = [];
 
+    let sceneCursor = this.entries.find((e) => e.scene)?.scene || 'RoomScene';
     for (const entry of this.entries) {
+      if (entry.scene) sceneCursor = entry.scene;
       if (entry.positions) {
         for (const pos of entry.positions) {
           this.storyPlacements.push({
@@ -110,6 +112,7 @@ export class Storyboard {
             y: pos.options.y,
             z: pos.options.z,
             face: pos.options.face,
+            scene: sceneCursor,
           });
         }
       }
@@ -173,14 +176,14 @@ export class Storyboard {
 
     // Precompute which characters appear in which scenes
     this.characterScenes = new Map();
-    let sceneCursor = initialSceneName;
+    let charSceneCursor = initialSceneName;
     for (const entry of this.entries) {
-      if (entry.scene) sceneCursor = entry.scene;
+      if (entry.scene) charSceneCursor = entry.scene;
       if (entry.character) {
         if (!this.characterScenes.has(entry.character)) {
           this.characterScenes.set(entry.character, new Set());
         }
-        this.characterScenes.get(entry.character).add(sceneCursor);
+        this.characterScenes.get(entry.character).add(charSceneCursor);
       }
     }
 
@@ -202,7 +205,44 @@ export class Storyboard {
       }
     }
 
-    // Position characters
+    // Apply story placements for initial scene (before arrangeCharacters)
+    // Only apply placements belonging to the current scene
+    const currentPlacements = this.storyPlacements?.filter(p => p.scene === initialSceneName) || [];
+    // First pass: set all positions
+    for (const p of currentPlacements) {
+      const char = this.characters.get(p.character);
+      if (!char) continue;
+      if (p.x !== undefined && p.z !== undefined) {
+        char.setPosition(p.x, p.y !== undefined ? p.y : 0, p.z);
+      }
+    }
+    // Second pass: apply faces (after all positions are set)
+    for (const p of currentPlacements) {
+      const char = this.characters.get(p.character);
+      if (!char || !p.face) continue;
+      if (p.face === 'center') {
+        // Only rotate horizontally toward center, keep upright
+        const dx = 0 - char.mesh.position.x;
+        const dz = 0 - char.mesh.position.z;
+        char.mesh.rotation.y = Math.atan2(dx, dz);
+      } else if (p.face === 'forward') {
+        char.mesh.lookAt(char.mesh.position.x, char.mesh.position.y, char.mesh.position.z + 5);
+      } else {
+        const targetChar = this.characters.get(p.face);
+        if (targetChar) {
+          // Only rotate horizontally toward target, keep upright
+          const dx = targetChar.mesh.position.x - char.mesh.position.x;
+          const dz = targetChar.mesh.position.z - char.mesh.position.z;
+          char.mesh.rotation.y = Math.atan2(dx, dz);
+        } else {
+          const dx = 0 - char.mesh.position.x;
+          const dz = 0 - char.mesh.position.z;
+          char.mesh.rotation.y = Math.atan2(dx, dz);
+        }
+      }
+    }
+
+    // Position characters (only fills in missing positions/faces)
     this.arrangeCharacters();
 
     // Apply story props AFTER characters are created and added to scene
@@ -363,31 +403,47 @@ export class Storyboard {
 
     this.currentScene = newScene;
     this.currentSceneName = sceneName;
-    if (!skipArrange) {
-      this.arrangeCharacters();
-    }
 
-    // Generic placements from story (x/y/z, no court spot)
-    if (this.storyPlacements) {
-      for (const p of this.storyPlacements) {
-        const char = this.characters.get(p.character);
-        if (!char) continue;
-        if (p.x !== undefined && p.z !== undefined) {
-          char.setPosition(p.x, p.y !== undefined ? p.y : 0, p.z);
-        }
-        if (p.face) {
-          if (p.face === 'center') {
-            char.mesh.lookAt(0, 1.5, 0);
-          } else {
-            const targetChar = this.characters.get(p.face);
-            if (targetChar) {
-              char.mesh.lookAt(targetChar.mesh.position.x, targetChar.mesh.position.y + 1.5, targetChar.mesh.position.z);
-            } else {
-              char.mesh.lookAt(0, 1.5, 0);
-            }
-          }
+    // Generic placements from story (x/y/z, no court spot) — apply BEFORE arrangeCharacters
+    // so arrangeCharacters only fills in missing positions
+    // Only apply placements belonging to the current scene
+    const scenePlacements = this.storyPlacements?.filter(p => p.scene === sceneName) || [];
+    // First pass: set all positions
+    for (const p of scenePlacements) {
+      const char = this.characters.get(p.character);
+      if (!char) continue;
+      if (p.x !== undefined && p.z !== undefined) {
+        char.setPosition(p.x, p.y !== undefined ? p.y : 0, p.z);
+      }
+    }
+    // Second pass: apply faces (after all positions are set)
+    for (const p of scenePlacements) {
+      const char = this.characters.get(p.character);
+      if (!char || !p.face) continue;
+      if (p.face === 'center') {
+        // Only rotate horizontally toward center, keep upright
+        const dx = 0 - char.mesh.position.x;
+        const dz = 0 - char.mesh.position.z;
+        char.mesh.rotation.y = Math.atan2(dx, dz);
+      } else if (p.face === 'forward') {
+        char.mesh.lookAt(char.mesh.position.x, char.mesh.position.y, char.mesh.position.z + 5);
+      } else {
+        const targetChar = this.characters.get(p.face);
+        if (targetChar) {
+          // Only rotate horizontally toward target, keep upright
+          const dx = targetChar.mesh.position.x - char.mesh.position.x;
+          const dz = targetChar.mesh.position.z - char.mesh.position.z;
+          char.mesh.rotation.y = Math.atan2(dx, dz);
+        } else {
+          const dx = 0 - char.mesh.position.x;
+          const dz = 0 - char.mesh.position.z;
+          char.mesh.rotation.y = Math.atan2(dx, dz);
         }
       }
+    }
+
+    if (!skipArrange) {
+      this.arrangeCharacters();
     }
 
     // Generic prop handling (all scenes)
@@ -613,20 +669,43 @@ export class Storyboard {
 
   arrangeCharacters() {
     const chars = Array.from(this.characters.values());
+    // Only consider placements for the current scene
+    const scenePlacements = this.storyPlacements?.filter(p => p.scene === this.currentSceneName) || [];
     if (chars.length === 1) {
-      chars[0].setPosition(0, 0, 0);
-      chars[0].mesh.lookAt(0, 0, 5);
+      // Only apply default position if not already set by storyPlacements
+      if (!scenePlacements.find(p => p.character === chars[0].name && p.x !== undefined)) {
+        chars[0].setPosition(0, 0, 0);
+      }
+      if (!scenePlacements.find(p => p.character === chars[0].name && p.face)) {
+        chars[0].mesh.lookAt(0, 0, 5);
+      }
     } else if (chars.length === 2) {
-      chars[0].setPosition(-1.5, 0, 0);
-      chars[0].mesh.lookAt(1.5, 0, 2);
-      chars[1].setPosition(1.5, 0, 0);
-      chars[1].mesh.lookAt(-1.5, 0, 2);
+      // Only apply default position if not already set by storyPlacements
+      const p0 = scenePlacements.find(p => p.character === chars[0].name);
+      const p1 = scenePlacements.find(p => p.character === chars[1].name);
+      if (!p0 || p0.x === undefined) {
+        chars[0].setPosition(-1.5, 0, 0);
+      }
+      if (!p0 || !p0.face) {
+        chars[0].mesh.lookAt(1.5, 0, 2);
+      }
+      if (!p1 || p1.x === undefined) {
+        chars[1].setPosition(1.5, 0, 0);
+      }
+      if (!p1 || !p1.face) {
+        chars[1].mesh.lookAt(-1.5, 0, 2);
+      }
     } else {
       const spacing = 2;
       const offset = ((chars.length - 1) * spacing) / 2;
       chars.forEach((char, i) => {
-        char.setPosition(i * spacing - offset, 0, 0);
-        char.mesh.lookAt(0, 0, 5);
+        const p = scenePlacements.find(sp => sp.character === char.name);
+        if (!p || p.x === undefined) {
+          char.setPosition(i * spacing - offset, 0, 0);
+        }
+        if (!p || !p.face) {
+          char.mesh.lookAt(0, 0, 5);
+        }
       });
     }
   }
@@ -676,12 +755,15 @@ export class Storyboard {
   update(forcedTime) {
     const t = forcedTime !== undefined ? forcedTime : this.getCurrentTime();
 
-    // Scene switches
+    // Scene switches — find the most recent scene entry whose startTime has passed
+    let targetScene = null;
     for (const entry of this.entries) {
-      if (entry.scene && t >= entry.startTime && t < entry.endTime) {
-        this.switchScene(entry.scene, true);
-        break;
+      if (entry.scene && t >= entry.startTime) {
+        targetScene = entry.scene;
       }
+    }
+    if (targetScene && targetScene !== this.currentSceneName) {
+      this.switchScene(targetScene, true);
     }
 
     // Transition effects

@@ -642,7 +642,7 @@ def mix_audio(manifest, bgm_path=None, sfx_events=None):
 
     if sfx_path:
         final_inputs.append(f'-i "{sfx_path}"')
-        final_filters.append(f"[{stream_idx}:a]volume=3.0[sfx{stream_idx}]")
+        final_filters.append(f"[{stream_idx}:a]volume=1.0[sfx{stream_idx}]")
         stream_idx += 1
 
     if stream_idx == 0:
@@ -653,10 +653,10 @@ def mix_audio(manifest, bgm_path=None, sfx_events=None):
         label = "dialogue" if i == 0 and dialogue_path else ("bgm" if i == (1 if dialogue_path else 0) and bgm_path else "sfx")
         amix_inputs += f"[{label}{i}]"
 
-    amix = f"{amix_inputs}amix=inputs={stream_idx}:duration=longest:normalize=0[outa]"
+    amix = f"{amix_inputs}amix=inputs={stream_idx}:duration=longest:normalize=0[outa];[outa]alimiter=level_in=1.0:level_out=1.0:limit=0.95[limited]"
     filter_complex = ";".join(final_filters + [amix])
 
-    cmd = f'ffmpeg -y {" ".join(final_inputs)} -filter_complex "{filter_complex}" -map "[outa]" -acodec pcm_s16le -ar 48000 "{mixed_path}"'
+    cmd = f'ffmpeg -y {" ".join(final_inputs)} -filter_complex "{filter_complex}" -map "[limited]" -acodec pcm_s16le -ar 48000 "{mixed_path}"'
     print("Mixing final audio into mixed.wav...")
     subprocess.run(cmd, shell=True, check=True)
     print(f"Mixed audio written to: {mixed_path}")
