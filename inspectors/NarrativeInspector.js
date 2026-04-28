@@ -26,6 +26,7 @@ export class NarrativeInspector extends InspectorBase {
     this._checkOrphanedProps(storyText);
     this._checkAnimPropRequirements(entries, episodeDir);
     this._checkActionTargets(entries);
+    this._checkActionReasonability(entries, storyText);
     // this._checkNoLazyShortcuts(entries, storyText);  // TODO: implement
   }
 
@@ -230,5 +231,112 @@ export class NarrativeInspector extends InspectorBase {
     const pattern = propPatterns[propType];
     if (!pattern) return false;
     return pattern.test(sceneText);
+  }
+
+  _checkActionReasonability(entries, storyText) {
+    // 1. 检查"凭空消失"：角色在场景A有台词/动作，场景B无退场动画且无 Position
+    const charSceneHistory = new Map(); // char -> [{ scene, entry, hasExit }]
+    
+    for (const entry of entries) {
+      if (!entry.character || !entry.scene) continue;
+      
+      if (!charSceneHistory.has(entry.character)) {
+        charSceneHistory.set(entry.character, []);
+      }
+      const history = charSceneHistory.get(entry.character);
+      
+      // 检查是否有退场相关事件/动画
+      const hasExitAnim = entry.animations?.some((a) => 
+        /walk|run|leave|exit|fade|move/i.test(a)
+      );
+      const hasExitEvent = entry.storyEvents?.some((e) => 
+        e.name === 'Move' || e.name === 'FadeOut' || e.name === 'Exit'
+      );
+      
+      history.push({
+        scene: entry.scene,
+        entry,
+        hasExit: hasExitAnim || hasExitEvent,
+      });
+    }
+
+    // 检查场景切换时的角色连续性
+    for (const [char, history] of charSceneHistory) {
+      for (let i = 1; i < history.length; i++) {
+        const prev = history[i - 1];
+        const curr = history[i];
+        
+        // 场景变化且无前一个场景的退场
+        if (prev.scene !== curr.scene && !prev.hasExit) {
+          // 检查新场景中是否有任何条目包含该角色的 Position 标签（重新入场）
+          const sceneEntries = entries.filter((e) => e.scene === curr.scene);
+          const positionRegex = new RegExp(`Position:${char}`, 'i');
+          const hasReentry = sceneEntries.some((e) => 
+            e.positionOps?.some((po) => po.character === char) ||
+            (e.rawText && positionRegex.test(e.rawText))
+          );
+          
+          // 也检查 storyText 全局（捕获未被 parse 的纯标签行）
+          const hasReentryGlobal = hasReentry || positionRegex.test(storyText);
+          
+          if (!hasReentryGlobal) {
+            this.addIssue('warning',
+              `角色 ${char} 从 ${prev.scene} 切换到 ${curr.scene} 时无退场动画，在新场景也无 Position 重新入场，可能"凭空消失"`,
+              curr.entry.startTime,
+              `在 ${prev.scene} 的最后一条目添加退场动画（如 {Walk} 或 {Event:Move}），或在 ${curr.scene} 第一条目添加 {Position:${char}}`,
+              'BUG-NARR-VANISH'
+            );
+          }
+        }
+      }
+    }
+
+    // 2. 检查"冲进海里"等移动描述但无 Event:Move
+    const moveKeywords = [
+      { regex: /冲进|冲进海里|跑向|冲向|飞向|跳向/, action: '移动', needsEvent: 'Event:Move' },
+      { regex: /逃走|逃跑|跑开|跑走/, action: '逃跑', needsEvent: 'Event:Move' },
+      { regex: /游向|游过去|游回来/, action: '游动', needsEvent: 'Event:Move' },
+    ];
+
+    for (const entry of entries) {
+      if (!entry.text) continue;
+      for (const mk of moveKeywords) {
+        if (mk.regex.test(entry.text)) {
+          const hasMoveEvent = entry.storyEvents?.some((e) => e.name === 'Move') ||
+            entry.rawText?.includes('Event:Move');
+          if (!hasMoveEvent) {
+            this.addIssue('warning',
+              `台词描述"${mk.action}"但无 ${mk.needsEvent} 事件: "${entry.text}"`,
+              entry.startTime,
+              `添加 {${mk.needsEvent}|character=${entry.character}|x=...|z=...|duration=...} 让角色实际移动`,
+              'BUG-NARR-NO-MOVE'
+            );
+          }
+        }
+      }
+    }
+
+    // 3. 检查静态姿势代替动态动作
+    const poseVsAction = [
+      { pose: 'FlyPose', desc: '飞行/飞起', needs: 'Float 动画或 Event:Move' },
+      { pose: 'Stand', desc: '走动', needs: 'Walk 动画' },
+    ];
+    for (const entry of entries) {
+      if (!entry.animations) continue;
+      for (const anim of entry.animations) {
+        const mismatch = poseVsAction.find((p) => p.pose === anim);
+        if (mismatch) {
+          const text = entry.text || '';
+          const hasMove = /飞|飞起|飞起来|走|走过去|走过来/.test(text);
+          if (hasMove) {
+            this.addIssue('info',
+              `动画 "${anim}" 是静态姿势，但台词描述"${mismatch.desc}"，可能需要 ${mismatch.needs}`,
+              entry.startTime,
+              `考虑添加 ${mismatch.needs}`
+            );
+          }
+        }
+      }
+    }
   }
 }

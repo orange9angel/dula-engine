@@ -326,8 +326,11 @@ export class Storyboard {
       const nextScene = entry.scene;
 
       if (prevScene !== nextScene) {
+        // Skip automatic walk-out/walk-in if the scene-switch entry has explicit storyPlacements
+        const hasStoryPlacements = entry.positions && entry.positions.length > 0;
+
         // Walk to exit before switch
-        if (WalkAnim && this.transitions.exits[prevScene]) {
+        if (WalkAnim && this.transitions.exits[prevScene] && !hasStoryPlacements) {
           const exit = this.transitions.exits[prevScene];
           let walkStart = switchTime - 1.5;
           if (i > 0) {
@@ -344,7 +347,7 @@ export class Storyboard {
         }
 
         // Teleport to entrance and walk in after switch
-        if (this.transitions.entrances[nextScene] && nextScene !== 'ParkScene' && WalkAnim) {
+        if (this.transitions.entrances[nextScene] && nextScene !== 'ParkScene' && WalkAnim && !hasStoryPlacements) {
           const entrance = this.transitions.entrances[nextScene];
           // Generic indoor scene walk in
           const chars = Array.from(this.characters.values());
@@ -361,6 +364,37 @@ export class Storyboard {
       }
 
       activeScene = nextScene;
+    }
+
+    // Queue generic story events (Event:Move, Event:Animate) for all scenes
+    for (const ev of this.storyEvents) {
+      const char = this.characters.get(ev.character);
+      if (!char) continue;
+      if (ev.type === 'move') {
+        let targetPos;
+        if (ev.relative) {
+          const current = { x: char.mesh.position.x, y: char.mesh.position.y, z: char.mesh.position.z };
+          targetPos = {
+            x: current.x + (ev.x || 0),
+            y: current.y + (ev.y || 0),
+            z: current.z + (ev.z || 0),
+          };
+        } else {
+          targetPos = { x: ev.x || 0, y: ev.y || 0, z: ev.z || 0 };
+        }
+        char.moveTo(targetPos, ev.startTime, ev.duration || 1.0);
+        // Auto-play movement animation (Walk by default, or specified action like Swim)
+        const moveAnimName = ev.action || 'Walk';
+        const MoveAnimClass = AnimationRegistry[moveAnimName];
+        if (MoveAnimClass) {
+          char.playAnimation(MoveAnimClass, ev.startTime, ev.duration || 1.0);
+        }
+      } else if (ev.type === 'animate') {
+        const AnimClass = AnimationRegistry[ev.action];
+        if (AnimClass) {
+          char.playAnimation(AnimClass, ev.startTime, ev.duration);
+        }
+      }
     }
 
     // Tennis ball & swing choreography is handled in switchScene('ParkScene')
@@ -403,17 +437,21 @@ export class Storyboard {
 
     this.currentScene = newScene;
     this.currentSceneName = sceneName;
+    // console.log('[switchScene] after migrate, chars in', sceneName, ':', this.currentScene.characters.map(c => c.constructor.name).join(','));
 
     // Generic placements from story (x/y/z, no court spot) — apply BEFORE arrangeCharacters
     // so arrangeCharacters only fills in missing positions
     // Only apply placements belonging to the current scene
     const scenePlacements = this.storyPlacements?.filter(p => p.scene === sceneName) || [];
+    console.log('[switchScene]', sceneName, 'placements:', scenePlacements.map(p => ({c: p.character, x: p.x, z: p.z})));
     // First pass: set all positions
     for (const p of scenePlacements) {
       const char = this.characters.get(p.character);
+      console.log('[switchScene] applying', p.character, 'char=', !!char, 'x=', p.x, 'z=', p.z);
       if (!char) continue;
       if (p.x !== undefined && p.z !== undefined) {
         char.setPosition(p.x, p.y !== undefined ? p.y : 0, p.z);
+        console.log('[switchScene] setPosition', p.character, 'to', p.x, p.y !== undefined ? p.y : 0, p.z, 'actual=', char.mesh.position.x, char.mesh.position.y, char.mesh.position.z);
       }
     }
     // Second pass: apply faces (after all positions are set)
@@ -783,6 +821,7 @@ export class Storyboard {
 
         if (isSpeakingWindow && isCurrentScene && !isInScene) {
           // Character enters scene just before speaking
+          console.log('[update] adding', entry.character, 'to', this.currentSceneName, 't=', t.toFixed(2), 'for speaking');
           this.currentScene.addCharacter(char);
           // Teleport to a reasonable position if no prior position set
           if (char.mesh.position.x === 0 && char.mesh.position.z === 0) {
@@ -803,9 +842,15 @@ export class Storyboard {
 
       // Remove characters whose last line in this scene has ended (with small grace period)
       for (const [name, char] of this.characters) {
-        if (!this.currentScene.characters.includes(char)) continue;
+        if (!this.currentScene.characters.includes(char)) {
+          // console.log('[update] skip remove', name, 'not in scene');
+          continue;
+        }
         const scenes = this.characterScenes.get(name);
-        if (!scenes || !scenes.has(this.currentSceneName)) continue;
+        if (!scenes || !scenes.has(this.currentSceneName)) {
+          // console.log('[update] skip remove', name, 'not in characterScenes for', this.currentSceneName);
+          continue;
+        }
 
         // Find the last entry for this character in the current scene
         let lastEndTime = -1;
@@ -817,11 +862,45 @@ export class Storyboard {
           }
         }
 
-        // If current time is past their last line + grace, remove them
-        if (lastEndTime > 0 && t > lastEndTime + 1.0) {
+        // Also consider storyEvents (e.g., Event:Move) for this character in this scene
+        let eventEndTime = -1;
+        let eventSceneCursor = this.entries.find((e) => e.scene)?.scene || this.currentSceneName;
+        for (const entry of this.entries) {
+          if (entry.scene) eventSceneCursor = entry.scene;
+          if (eventSceneCursor === this.currentSceneName && entry.storyEvents) {
+            for (const ev of entry.storyEvents) {
+              if (ev.options.character === name) {
+                const evEnd = entry.startTime + (ev.options.duration || 1.0);
+                eventEndTime = Math.max(eventEndTime, evEnd);
+              }
+            }
+          }
+        }
+
+        // Also consider storyPlacements: if character has explicit positions in this scene,
+        // extend their presence to the end of the scene (last entry in this scene)
+        let placementEndTime = -1;
+        let placementSceneCursor = this.entries.find((e) => e.scene)?.scene || this.currentSceneName;
+        for (const entry of this.entries) {
+          if (entry.scene) placementSceneCursor = entry.scene;
+          if (placementSceneCursor === this.currentSceneName && entry.positions) {
+            for (const pos of entry.positions) {
+              if (pos.name === name) {
+                placementEndTime = Math.max(placementEndTime, entry.endTime);
+              }
+            }
+          }
+        }
+
+        const effectiveLastEndTime = Math.max(lastEndTime, eventEndTime, placementEndTime);
+
+        // If current time is past their last line/event/placement + grace, remove them
+        if (effectiveLastEndTime > 0 && t > effectiveLastEndTime + 1.0) {
+          // console.log('[update] removing', name, 'from', this.currentSceneName, 't=', t.toFixed(2), 'lastEndTime=', lastEndTime, 'eventEndTime=', eventEndTime, 'placementEndTime=', placementEndTime);
           this.currentScene.removeCharacter(char);
         }
       }
+      // console.log('[update t=' + t.toFixed(2) + '] chars in', this.currentSceneName, ':', this.currentScene.characters.map(c => c.constructor.name).join(','));
     }
 
     // Character speaking states
@@ -942,7 +1021,34 @@ export class Storyboard {
     }
 
     if (this.currentScene) {
+      // Trigger time-based scene events (e.g., SharkAppear at specific entry time)
+      for (const entry of this.entries) {
+        if (entry.storyEvents && t >= entry.startTime && !entry._sharkTriggered) {
+          for (const ev of entry.storyEvents) {
+            if (ev.name === 'SharkAppear' && this.currentScene.showShark) {
+              this.currentScene.showShark();
+              entry._sharkTriggered = true;
+            }
+          }
+        }
+      }
+      // console.log('[update t=' + t.toFixed(2) + '] BEFORE currentScene.update, chars count=', this.currentScene.characters.length);
       this.currentScene.update(t, 0.016);
+      // console.log('[update t=' + t.toFixed(2) + '] AFTER currentScene.update, chars count=', this.currentScene.characters.length, 'scene=', this.currentScene.name);
+      // DEBUG: log character positions
+      // DEBUG: BeachScene character positions
+      // if (this.currentSceneName === 'BeachScene') {
+      //   const chars = this.currentScene.characters;
+      //   console.log('[update t=' + t.toFixed(2) + '] chars in ' + this.currentSceneName + ' count=' + chars.length);
+      //   for (let i = 0; i < chars.length; i++) {
+      //     const c = chars[i];
+      //     if (c) {
+      //       console.log('  [' + i + '] name=' + c.name + ' pos=' + c.mesh.position.x.toFixed(2) + ',' + c.mesh.position.y.toFixed(2) + ',' + c.mesh.position.z.toFixed(2));
+      //     } else {
+      //       console.log('  [' + i + '] UNDEFINED');
+      //     }
+      //   }
+      // }
     }
 
     // Camera moves

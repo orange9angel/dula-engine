@@ -184,6 +184,50 @@ function parseStory(text) {
     const sceneMatch = line.match(/^@(\w+)/);
     if (sceneMatch) {
       currentScene = sceneMatch[1];
+      // Also push scene declaration as an entry so inspectors can access tags on it
+      entryIndex++;
+      const sceneRawText = line.substring(sceneMatch[0].length);
+      
+      // Extract transition from scene line
+      let transition = null;
+      const transMatch = sceneRawText.match(/\{Transition:([^|}]+)/);
+      if (transMatch) transition = transMatch[1];
+      
+      // Extract position ops from scene line
+      const positionOps = [];
+      const posRegex = /\{Position:([^}]+)\}/g;
+      let posMatch;
+      while ((posMatch = posRegex.exec(sceneRawText)) !== null) {
+        const posInner = posMatch[1];
+        const parts = posInner.split('|').map((s) => s.trim());
+        const character = parts[0];
+        const options = {};
+        for (let j = 1; j < parts.length; j++) {
+          const eqIdx = parts[j].indexOf('=');
+          if (eqIdx === -1) continue;
+          const key = parts[j].slice(0, eqIdx).trim();
+          const val = parts[j].slice(eqIdx + 1).trim();
+          options[key] = isNaN(Number(val)) ? val : Number(val);
+        }
+        positionOps.push({ character, options });
+      }
+      
+      entries.push({
+        index: entryIndex,
+        line: i + 1,
+        character: null,
+        text: '',
+        rawText: sceneRawText,
+        startTime: currentTime,
+        endTime: currentTime,
+        scene: currentScene,
+        animations: [],
+        propOps: [],
+        positionOps,
+        storyEvents: [],
+        camera: null,
+        transition,
+      });
       continue;
     }
 
@@ -253,6 +297,25 @@ function parseStory(text) {
         propOps.push({ name, options });
       }
 
+      // Extract position ops
+      const positionOps = [];
+      const posRegex = /\{Position:([^}]+)\}/g;
+      let posMatch;
+      while ((posMatch = posRegex.exec(rawText)) !== null) {
+        const posInner = posMatch[1];
+        const parts = posInner.split('|').map((s) => s.trim());
+        const character = parts[0];
+        const options = {};
+        for (let j = 1; j < parts.length; j++) {
+          const eqIdx = parts[j].indexOf('=');
+          if (eqIdx === -1) continue;
+          const key = parts[j].slice(0, eqIdx).trim();
+          const val = parts[j].slice(eqIdx + 1).trim();
+          options[key] = isNaN(Number(val)) ? val : Number(val);
+        }
+        positionOps.push({ character, options });
+      }
+
       // Extract story events
       const storyEvents = [];
       const eventRegex = /\{Event:([^|]+)\|([^}]+)\}/g;
@@ -290,6 +353,7 @@ function parseStory(text) {
         scene: currentScene,
         animations,
         propOps,
+        positionOps,
         storyEvents,
         camera,
         transition,
@@ -301,7 +365,47 @@ function parseStory(text) {
 
     // Non-character line with text (potential BUG-1)
     // But skip lines that are purely tags (Position, Music, etc. on their own lines)
-    const isPureTagLine = /^\{[A-Z][a-zA-Z]+:[^}]+\}$/.test(line) || /^\{[A-Z][a-zA-Z]+\}$/.test(line);
+    const isPureTagLine = /^\{[A-Z][a-zA-Z]+:[^}]+\}$/.test(line) || /^\{[A-Z][a-zA-Z]+\}$/.test(line) || /^(\{[A-Z][a-zA-Z]+:[^}]+\})+$/.test(line);
+    
+    // Pure tag lines with Position — also push as entries for inspector visibility
+    if (isPureTagLine && line.includes('Position:')) {
+      entryIndex++;
+      // Extract position ops
+      const positionOps = [];
+      const posRegex = /\{Position:([^}]+)\}/g;
+      let posMatch;
+      while ((posMatch = posRegex.exec(line)) !== null) {
+        const posInner = posMatch[1];
+        const parts = posInner.split('|').map((s) => s.trim());
+        const character = parts[0];
+        const options = {};
+        for (let j = 1; j < parts.length; j++) {
+          const eqIdx = parts[j].indexOf('=');
+          if (eqIdx === -1) continue;
+          const key = parts[j].slice(0, eqIdx).trim();
+          const val = parts[j].slice(eqIdx + 1).trim();
+          options[key] = isNaN(Number(val)) ? val : Number(val);
+        }
+        positionOps.push({ character, options });
+      }
+      entries.push({
+        index: entryIndex,
+        line: i + 1,
+        character: null,
+        text: '',
+        rawText: line,
+        startTime: currentTime,
+        endTime: currentTime,
+        scene: currentScene,
+        animations: [],
+        propOps: [],
+        positionOps,
+        storyEvents: [],
+        camera: null,
+        transition: null,
+      });
+    }
+    
     if (line && !line.startsWith('{') && !line.startsWith('@') && !/^\d+$/.test(line) && !isPureTagLine) {
       entryIndex++;
       const duration = estimateDuration(line);

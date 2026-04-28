@@ -25,7 +25,7 @@ const server = http.createServer((req, res) => {
   if (reqPath.startsWith('/episode/')) {
     const relPath = reqPath.slice('/episode/'.length);
     const filePath = path.join(EPISODE_DIR, relPath);
-    serveFile(filePath, res);
+    serveFile(filePath, res, reqPath);
     return;
   }
 
@@ -36,16 +36,16 @@ const server = http.createServer((req, res) => {
     if (!fs.existsSync(filePath)) {
       filePath = path.join(process.cwd(), 'node_modules', relPath);
     }
-    serveFile(filePath, res);
+    serveFile(filePath, res, reqPath);
     return;
   }
 
   // Serve engine files from engine root
   const filePath = path.join(ROOT, reqPath === '/' ? 'render.html' : reqPath);
-  serveFile(filePath, res);
+  serveFile(filePath, res, reqPath);
 });
 
-function serveFile(filePath, res) {
+function serveFile(filePath, res, reqPath) {
   const ext = path.extname(filePath).toLowerCase();
   const mimeTypes = {
     '.html': 'text/html',
@@ -63,6 +63,7 @@ function serveFile(filePath, res) {
   fs.readFile(filePath, (err, data) => {
     if (err) {
       // 404
+      console.log('404:', reqPath || filePath);
       res.writeHead(404);
       res.end('Not Found');
       return;

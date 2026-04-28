@@ -176,6 +176,14 @@ export class CharacterBase {
         if (Math.abs(dx) > 0.001 || Math.abs(dz) > 0.001) {
           this.mesh.lookAt(this.mesh.position.x + dx, this.mesh.position.y, this.mesh.position.z + dz);
         }
+      } else if (time >= move.endTime && !move.completed) {
+        // Ensure character reaches target position even if update jumps past endTime
+        this.mesh.position.x = move.targetPos.x;
+        this.mesh.position.z = move.targetPos.z;
+        if (move.targetPos.y !== undefined) {
+          this.mesh.position.y = move.targetPos.y;
+        }
+        move.completed = true;
       }
     }
 
@@ -190,6 +198,7 @@ export class CharacterBase {
 
   animateMouth(time, delta) {
     if (!this.mouth) return;
+    this.mouth.visible = true;
     // Pronounced mouth opening for clear visibility
     const speed = 10;
     const factor = Math.abs(Math.sin(time * speed));

@@ -9,7 +9,8 @@ import path from 'path';
  * 检查范围:
  * - 音频文件存在性（基于 manifest.json 或构造文件名）
  * - 音频时长与台词匹配
- * - 音频实际音量（防止静音/音量过低）—— 关键检查
+ * - 音频实际音量（防止静音/音量过低）
+ * - 说话抢拍检测（音频时长超过时间窗口，与下一条重叠）—— 关键检查
  * - BGM endTime 与总时长对比
  * - SFX 素材存在性
  * - manifest.json 同步性
@@ -26,7 +27,6 @@ export class AudioInspector extends InspectorBase {
     const { entries, audioDir, totalDuration, manifest, storyText } = context;
 
     // Build a mapping from entry index (matching audio filenames) to entry
-    // Strategy: prefer manifest.json file field, fallback to constructed filename
     const speakingEntries = [];
     for (const entry of entries) {
       if (entry.text && entry.character) {
@@ -35,13 +35,11 @@ export class AudioInspector extends InspectorBase {
     }
 
     // Build file mapping: if manifest exists, use its file names; otherwise construct
-    const fileMapping = []; // { entry, audioFile, audioPath }
+    const fileMapping = [];
     if (manifest && manifest.entries && manifest.entries.length > 0) {
-      // Use manifest.json file names (ground truth from dula-audio)
       for (const mEntry of manifest.entries) {
         const audioFile = mEntry.file;
         const audioPath = path.join(audioDir, audioFile);
-        // Find matching story entry by startTime + character
         const storyEntry = speakingEntries.find(
           (e) => e.character === mEntry.character && Math.abs(e.startTime - mEntry.startTime) < 0.5
         );
@@ -52,7 +50,6 @@ export class AudioInspector extends InspectorBase {
         });
       }
     } else {
-      // Fallback: construct filenames based on speaking entry order (1-based)
       for (let idx = 0; idx < speakingEntries.length; idx++) {
         const entry = speakingEntries[idx];
         const fileNum = String(idx + 1).padStart(3, '0');
@@ -74,6 +71,9 @@ export class AudioInspector extends InspectorBase {
         fileMapping.push({ entry, audioFile, audioPath });
       }
     }
+
+    // ── 说话抢拍检测：检查音频时长是否超过时间窗口，与下一条重叠 ──
+    this._checkAudioOverlap(fileMapping, speakingEntries);
 
     // Check each mapped audio file
     for (const { entry, audioFile, audioPath } of fileMapping) {
@@ -168,12 +168,47 @@ export class AudioInspector extends InspectorBase {
   }
 
   /**
+   * 检查说话抢拍：音频实际时长是否超过时间窗口，与下一条目重叠
+   * 这是关键检测，防止"话还没说完，下一个人就开始讲"
+   */
+  _checkAudioOverlap(fileMapping, speakingEntries) {
+    for (let i = 0; i < fileMapping.length; i++) {
+      const { entry, audioPath } = fileMapping[i];
+      if (!audioPath || !fs.existsSync(audioPath)) continue;
+
+      try {
+        const output = execSync(
+          `ffprobe -v error -show_entries format=duration -of csv=p=0 "${audioPath}"`,
+          { encoding: 'utf-8', timeout: 5000 }
+        );
+        const audioDuration = parseFloat(output.trim());
+        const timeWindow = (entry.endTime || entry.startTime + 3) - entry.startTime;
+
+        // 音频实际结束时间
+        const audioEndTime = entry.startTime + audioDuration;
+
+        // 检查是否超过自己的时间窗口
+        if (audioDuration > timeWindow + 0.5) {
+          // 找下一条同场景的角色台词
+          const nextEntry = speakingEntries.find((e) => e.startTime >= entry.startTime && e !== entry && e.character);
+          if (nextEntry && audioEndTime > nextEntry.startTime + 0.3) {
+            const overlap = (audioEndTime - nextEntry.startTime).toFixed(2);
+            this.addIssue('error', `抢拍检测: ${entry.character} 的台词音频(${audioDuration.toFixed(2)}s) 过长，与 ${nextEntry.character} 的下一条台词重叠 ${overlap}s。"${entry.text?.substring(0, 15)}..."还没说完，"${nextEntry.text?.substring(0, 15)}..."就开始了`, entry.startTime, `将 Entry 时间窗口从 ${timeWindow.toFixed(1)}s 扩大到 ${Math.ceil(audioDuration + 1)}s，或缩短台词`, 'BUG-AUDIO-OVERLAP');
+          } else {
+            this.addIssue('warning', `音频时长超过时间窗口: ${entry.character} 的台词音频 ${audioDuration.toFixed(2)}s > 窗口 ${timeWindow.toFixed(2)}s`, entry.startTime, `扩大时间窗口或缩短台词`, 'BUG-AUDIO-LONG');
+          }
+        }
+      } catch (e) {
+        // skip
+      }
+    }
+  }
+
+  /**
    * 使用 ffmpeg volumedetect 滤镜检测音频音量
-   * 避免 amovie 在 Windows 路径下的问题
    */
   _checkAudioVolume(audioPath, audioFile, entry) {
     try {
-      // ffmpeg with -f null - always exits with code 1 on Windows, so we catch the error
       let volOutput = '';
       try {
         volOutput = execSync(
@@ -181,7 +216,6 @@ export class AudioInspector extends InspectorBase {
           { encoding: 'utf-8', timeout: 15000 }
         );
       } catch (e) {
-        // ffmpeg exits with code 1 when outputting to null, but stderr contains the data
         volOutput = e.stdout || e.stderr || '';
       }
 
@@ -206,7 +240,6 @@ export class AudioInspector extends InspectorBase {
         this.addIssue('error', `音频 "${audioFile}" 无法检测音量，可能为静音或损坏文件`, entry.startTime, '重新运行 dula-audio 生成音频', 'BUG-AUDIO-MUTE');
       }
     } catch (e) {
-      // ffmpeg failed, try ffprobe with astats as fallback (using forward slashes)
       try {
         const safePath = audioPath.replace(/\\/g, '/');
         const astatsOutput = execSync(
