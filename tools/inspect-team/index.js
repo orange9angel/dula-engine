@@ -79,6 +79,49 @@ console.log(chalk.gray(`Entries: ${entries.length}`));
 console.log(chalk.gray(`Duration: ${context.totalDuration.toFixed(1)}s`));
 console.log();
 
+// ── Pre-flight Checklist ──
+const { runPreflight } = await import('./preflight.js');
+const preflight = runPreflight(context);
+
+console.log(chalk.magenta('═─ 起飞前检查单 ─═'));
+console.log();
+
+// Group checklist by category
+const byCategory = new Map();
+for (const item of preflight.checklist) {
+  if (!byCategory.has(item.category)) byCategory.set(item.category, []);
+  byCategory.get(item.category).push(item);
+}
+
+for (const [category, items] of byCategory) {
+  console.log(chalk.blue(`  [${category}]`));
+  for (const item of items) {
+    const color = item.status === '❌' ? 'red' : item.status === '⚠️' ? 'yellow' : 'green';
+    console.log(chalk[color](`    ${item.status} ${item.item} — ${item.detail}`));
+  }
+}
+
+console.log();
+
+if (preflight.issues.length > 0) {
+  for (const issue of preflight.issues) {
+    const color = issue.severity === 'error' ? 'red' : 'yellow';
+    const icon = issue.severity === 'error' ? '🔴' : '🟡';
+    console.log(chalk[color](`  ${icon} ${issue.message}`));
+    if (issue.fix) console.log(chalk.gray(`     💡 ${issue.fix}`));
+  }
+  console.log();
+}
+
+const pfColor = preflight.passed ? 'green' : 'red';
+console.log(chalk[pfColor](`  起飞前检查: ${preflight.passed ? '通过' : '未通过'} (${preflight.errorCount} 错误 / ${preflight.warningCount} 警告)`));
+console.log();
+
+if (preflight.errorCount > 0) {
+  console.log(chalk.red('  ⚠️  存在阻塞性问题，建议先修复再运行完整质检'));
+  console.log();
+}
+
 // Run all inspectors
 const inspectors = getAllInspectors();
 const reports = [];

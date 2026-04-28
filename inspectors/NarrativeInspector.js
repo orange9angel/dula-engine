@@ -26,6 +26,7 @@ export class NarrativeInspector extends InspectorBase {
     this._checkOrphanedProps(storyText);
     this._checkAnimPropRequirements(entries, episodeDir);
     this._checkActionTargets(entries);
+    // this._checkNoLazyShortcuts(entries, storyText);  // TODO: implement
   }
 
   _checkPropMentions(entries, storyText, episodeDir) {
