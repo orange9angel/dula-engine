@@ -49,7 +49,7 @@ export class SceneInspector extends InspectorBase {
     for (const sceneName of scenes) {
       // Note: we can't fully check SceneRegistry without loading dula-assets,
       // but we can check against known scenes and bootstrap explicit registrations
-      const knownScenes = ['RoomScene', 'ParkScene', 'SkyScene', 'StarSkyScene', 'NightRoomScene', 'NightStreetScene', 'BasketballArenaScene', 'GLTFArenaScene'];
+      const knownScenes = ['RoomScene', 'ParkScene', 'SkyScene', 'StarSkyScene', 'NightRoomScene', 'NightStreetScene', 'BasketballArenaScene', 'GLTFArenaScene', 'BeachScene'];
       const isRegistered = registeredScenes.has(sceneName) || knownScenes.includes(sceneName);
 
       if (!isRegistered && registeredScenes.size > 0) {

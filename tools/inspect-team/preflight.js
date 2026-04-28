@@ -24,7 +24,7 @@ export function runPreflight(context) {
   const sceneMatches = storyText.matchAll(/^@(\w+)/gm);
   for (const m of sceneMatches) scenes.add(m[1]);
 
-  const knownScenes = ['RoomScene', 'ParkScene', 'SkyScene', 'StarSkyScene', 'NightRoomScene', 'NightStreetScene', 'BasketballArenaScene', 'GLTFArenaScene'];
+  const knownScenes = ['RoomScene', 'ParkScene', 'SkyScene', 'StarSkyScene', 'NightRoomScene', 'NightStreetScene', 'BasketballArenaScene', 'GLTFArenaScene', 'BeachScene'];
   const customScenesDir = path.join(episodeDir, 'scenes');
 
   for (const scene of scenes) {
