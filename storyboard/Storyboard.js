@@ -1023,11 +1023,46 @@ export class Storyboard {
     if (this.currentScene) {
       // Trigger time-based scene events (e.g., SharkAppear at specific entry time)
       for (const entry of this.entries) {
-        if (entry.storyEvents && t >= entry.startTime && !entry._sharkTriggered) {
+        if (entry.storyEvents && t >= entry.startTime) {
+          entry._sceneEventsTriggered = entry._sceneEventsTriggered || {};
           for (const ev of entry.storyEvents) {
+            const evKey = ev.options.action ? ev.name + ':' + ev.options.action : ev.name;
+            if (entry._sceneEventsTriggered[evKey]) continue; // already triggered
+            entry._sceneEventsTriggered[evKey] = true;
+
             if (ev.name === 'SharkAppear' && this.currentScene.showShark) {
               this.currentScene.showShark();
-              entry._sharkTriggered = true;
+            }
+            // SharkOrbit: switch shark to orbit mode around a character
+            if (ev.name === 'SharkOrbit' && this.currentScene.setSharkOrbitMode) {
+              const targetChar = ev.options.character || 'Nobita';
+              let cx = 0, cz = -8;
+              for (const ch of this.currentScene.characters) {
+                if (ch.name === targetChar) {
+                  cx = ch.mesh.position.x;
+                  cz = ch.mesh.position.z;
+                  break;
+                }
+              }
+              this.currentScene.setSharkOrbitMode(cx, cz, ev.options.radius ? parseFloat(ev.options.radius) : 4);
+            }
+            // SplashStart: activate splash particles on a character
+            if (ev.name === 'SplashStart' && this.currentScene.setSplashTarget) {
+              const targetChar = ev.options.character || 'Nobita';
+              for (const ch of this.currentScene.characters) {
+                if (ch.name === targetChar) {
+                  this.currentScene.setSplashTarget(ch.mesh);
+                  break;
+                }
+              }
+            }
+            // SplashStop: deactivate splash particles
+            if (ev.name === 'SplashStop' && this.currentScene.stopSplash) {
+              this.currentScene.stopSplash();
+            }
+            // RescueTakecopter: rescue character with takecopter
+            if (ev.name === 'RescueTakecopter' && this.currentScene.rescueWithTakecopter) {
+              this.currentScene.rescueWithTakecopter(ev.options.character || 'Nobita');
             }
           }
         }

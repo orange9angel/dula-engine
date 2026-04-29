@@ -161,7 +161,25 @@ export class AudioInspector extends InspectorBase {
       for (const file of audioFiles) {
         if (file === 'mixed.wav' || file.startsWith('_temp_')) continue;
         if (!referencedFiles.has(file)) {
-          this.addIssue('info', `未引用的音频文件: ${file}`, null, '检查是否多余的音频文件');
+          this.addIssue('warning', `未引用的孤立音频文件: ${file}，可能导致混音重复或文件堆积`, null, '删除该文件或重新运行 dula-audio 生成干净音频', 'BUG-AUDIO-ORPHAN');
+        }
+      }
+
+      // Check for duplicate character files (same character, multiple numbered files)
+      const charFileMap = new Map(); // char -> [{file, num}]
+      for (const file of audioFiles) {
+        const match = file.match(/^(\d+)_(\w+)\.(mp3|wav)$/);
+        if (match) {
+          const num = parseInt(match[1], 10);
+          const char = match[2];
+          if (!charFileMap.has(char)) charFileMap.set(char, []);
+          charFileMap.get(char).push({ file, num });
+        }
+      }
+      for (const [char, files] of charFileMap) {
+        if (files.length > 1) {
+          const nums = files.map((f) => f.num).sort((a, b) => a - b);
+          this.addIssue('warning', `角色 ${char} 有 ${files.length} 个音频文件 (${files.map((f) => f.file).join(', ')})，可能导致混音时台词重复`, null, '删除多余文件，只保留与 manifest 对应的文件', 'BUG-AUDIO-DUPLICATE');
         }
       }
     }

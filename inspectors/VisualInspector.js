@@ -86,6 +86,100 @@ export class VisualInspector extends InspectorBase {
 
     // ── 角色位置重叠检测：同一场景中多个角色是否挤在一起 ──
     this._checkCharacterOverlap(entries);
+
+    // ── 场景环境语义与截图一致性检测 ──
+    this._checkSceneEnvironmentConsistency(entries, shots, storyboardDir);
+  }
+
+  /**
+   * 检查截图中的场景环境是否与剧本语义一致
+   * 例如：海边场景中角色应在水中，截图应有蓝色像素
+   */
+  _checkSceneEnvironmentConsistency(entries, shots, storyboardDir) {
+    // 场景环境语义映射
+    const sceneEnvExpectations = {
+      'BeachScene': {
+        waterKeywords: ['冲进海里', '海里', '游泳', '水中', '海水', '鲨鱼', '游回来'],
+        expectedColors: ['blue', 'cyan'],
+        checkRegion: 'lower-half', // 检查截图下半部分
+      },
+    };
+
+    const charEntries = entries.filter((e) => e.character && e.text);
+
+    for (let i = 0; i < shots.length && i < charEntries.length; i++) {
+      const entry = charEntries[i];
+      const shotPath = path.join(storyboardDir, shots[i]);
+      const shotNum = i + 1;
+
+      if (!entry.scene || !entry.text) continue;
+      const envExpect = sceneEnvExpectations[entry.scene];
+      if (!envExpect) continue;
+
+      // 检查台词是否暗示角色应在特定环境中
+      const hasWaterIntent = envExpect.waterKeywords.some((kw) => entry.text.includes(kw));
+      if (!hasWaterIntent) continue;
+
+      // 检查该条目是否有 Event:Move 到水中
+      const hasWaterMove = entry.storyEvents?.some((ev) => {
+        if (ev.name !== 'Move') return false;
+        const z = ev.options?.z;
+        if (z === undefined) return false;
+        // BeachScene 海洋范围 z=-4.5 ~ -39.5
+        return z <= -4.5 && z >= -39.5;
+      });
+
+      // 也检查角色是否已经在水中（通过 Position 或之前的 Move）
+      const charName = entry.character;
+      let isInWater = hasWaterMove;
+      if (!isInWater) {
+        // 查找该角色在当前场景中的位置
+        for (const e of entries) {
+          if (e.scene !== entry.scene) continue;
+          // 从 positionOps 或 storyEvents 检查
+          if (e.positionOps) {
+            for (const po of e.positionOps) {
+              if (po.character === charName) {
+                const z = po.options?.z;
+                if (z !== undefined && z <= -4.5 && z >= -39.5) {
+                  isInWater = true;
+                  break;
+                }
+              }
+            }
+          }
+          if (e.storyEvents) {
+            for (const ev of e.storyEvents) {
+              if (ev.name === 'Move' && ev.options?.character === charName) {
+                const z = ev.options?.z;
+                if (z !== undefined && z <= -4.5 && z >= -39.5) {
+                  isInWater = true;
+                  break;
+                }
+              }
+            }
+          }
+          if (isInWater) break;
+        }
+      }
+
+      if (isInWater) {
+        // 角色应在水中，但 VisualInspector 无法做像素分析（没有图像处理库）
+        // 退而求其次：检查截图文件大小是否在合理范围（水中场景通常有更多反射/波纹细节）
+        const stats = fs.statSync(shotPath);
+        const sizeKB = stats.size / 1024;
+
+        // 水中场景如果文件过小，可能意味着水面/角色不可见
+        if (sizeKB < 40) {
+          this.addIssue('warning',
+            `Shot ${shotNum}: 角色 ${charName} 应在 BeachScene 水中，但截图文件仅 ${sizeKB.toFixed(1)}KB，可能水面或角色不可见`,
+            entry.startTime,
+            '检查海洋平面位置和角色 y 坐标，确保角色身体露出水面',
+            'BUG-VIS-WATER-CHAR'
+          );
+        }
+      }
+    }
   }
 
   /**

@@ -26,6 +26,7 @@ export class NarrativeInspector extends InspectorBase {
     this._checkOrphanedProps(storyText);
     this._checkAnimPropRequirements(entries, episodeDir);
     this._checkActionTargets(entries);
+    this._checkPositionEnvironmentConsistency(entries);
     this._checkActionReasonability(entries, storyText);
     // this._checkNoLazyShortcuts(entries, storyText);  // TODO: implement
   }
@@ -231,6 +232,58 @@ export class NarrativeInspector extends InspectorBase {
     const pattern = propPatterns[propType];
     if (!pattern) return false;
     return pattern.test(sceneText);
+  }
+
+  _checkPositionEnvironmentConsistency(entries) {
+    // 场景环境语义与角色位置一致性检查
+    // 例如：海边场景中，角色说"冲进海里"但目标位置不在水中
+    const sceneEnvBounds = {
+      'BeachScene': {
+        waterZMin: -39.5, waterZMax: -4.5, // 海洋覆盖范围 (z=-22, height=35)
+        waterY: 0.1, // 水面高度
+        sandZMin: -4.5, sandZMax: 30, // 沙滩范围
+      },
+    };
+
+    for (const entry of entries) {
+      if (!entry.scene || !entry.storyEvents) continue;
+      const bounds = sceneEnvBounds[entry.scene];
+      if (!bounds) continue;
+
+      for (const ev of entry.storyEvents) {
+        if (ev.name === 'Move') {
+          const opts = ev.options;
+          const targetZ = opts.z;
+          const targetY = opts.y;
+          const charName = opts.character || entry.character;
+          if (targetZ === undefined) continue;
+
+          // 检查"冲进海里"类描述但目标不在水中
+          const text = entry.text || '';
+          const isWaterIntent = /冲进海里|海里|游泳|水中|海水/.test(text);
+          const isInWater = targetZ <= bounds.waterZMax && targetZ >= bounds.waterZMin;
+          
+          if (isWaterIntent && !isInWater) {
+            this.addIssue('error',
+              `角色 ${charName} 台词描述进入水中，但 Event:Move 目标 z=${targetZ} 不在 BeachScene 海洋范围内(${bounds.waterZMin}~${bounds.waterZMax})，角色将站在沙滩上`,
+              entry.startTime,
+              `将目标 z 调整到 ${bounds.waterZMax - 2} 到 ${bounds.waterZMin + 2} 之间，确保角色在水中`,
+              'BUG-NARR-WATER-POSITION'
+            );
+          }
+
+          // 检查 y 坐标：如果目标在水中但 y 过低，角色可能完全沉底不可见
+          if (isInWater && targetY !== undefined && targetY < -0.5) {
+            this.addIssue('warning',
+              `角色 ${charName} 在水中但 y=${targetY} 过低，身体可能大部分没入水面下不可见`,
+              entry.startTime,
+              `建议将 y 设为 -0.2 ~ 0.0，使角色上半身露出水面`,
+              'BUG-NARR-WATER-DEPTH'
+            );
+          }
+        }
+      }
+    }
   }
 
   _checkActionReasonability(entries, storyText) {

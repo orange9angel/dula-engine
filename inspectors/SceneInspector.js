@@ -98,6 +98,84 @@ export class SceneInspector extends InspectorBase {
         this.addIssue('warning', `Entry ${entry.line || '?'} 有对白文本但无 [Character] 标签`, entry.startTime, '添加 [Character] 标签或移除文本', 'BUG-1');
       }
     }
+
+    // ── 场景几何元数据检查 ──
+    // 检查 BeachScene 中角色位置是否在海洋范围内
+    this._checkSceneGeometry(entries);
+  }
+
+  /**
+   * 检查场景几何：角色位置与场景元素的包含关系
+   * 这是静态检查，基于场景已知几何参数
+   */
+  _checkSceneGeometry(entries) {
+    // BeachScene 几何参数（与 BeachScene.js 保持一致）
+    const beachSceneGeometry = {
+      ocean: { centerZ: -22, width: 100, depth: 35, y: 0.1 },
+      sand: { centerZ: 0, width: 100, depth: 60 },
+    };
+
+    for (const entry of entries) {
+      if (entry.scene !== 'BeachScene') continue;
+      if (!entry.storyEvents && !entry.positionOps) continue;
+
+      // 收集该条目中所有角色的目标位置
+      const charPositions = [];
+
+      if (entry.positionOps) {
+        for (const po of entry.positionOps) {
+          const z = po.options?.z;
+          const y = po.options?.y ?? 0;
+          if (z !== undefined) {
+            charPositions.push({ character: po.character, x: po.options?.x ?? 0, y, z });
+          }
+        }
+      }
+
+      if (entry.storyEvents) {
+        for (const ev of entry.storyEvents) {
+          if (ev.name === 'Move') {
+            const z = ev.options?.z;
+            const y = ev.options?.y ?? 0;
+            const char = ev.options?.character;
+            if (z !== undefined && char) {
+              charPositions.push({ character: char, x: ev.options?.x ?? 0, y, z });
+            }
+          }
+        }
+      }
+
+      for (const pos of charPositions) {
+        const { character, z, y } = pos;
+        const ocean = beachSceneGeometry.ocean;
+        const oceanZMin = ocean.centerZ - ocean.depth / 2; // -39.5
+        const oceanZMax = ocean.centerZ + ocean.depth / 2; // -4.5
+        const isInOcean = z <= oceanZMax && z >= oceanZMin;
+
+        // 检查台词语义与位置一致性
+        const text = entry.text || '';
+        const isWaterIntent = /冲进海里|海里|游泳|水中|海水|鲨鱼|游回来|救命/.test(text);
+
+        if (isWaterIntent && !isInOcean) {
+          this.addIssue('error',
+            `BeachScene 中角色 ${character} 台词暗示在水中活动，但位置 z=${z} 不在海洋范围内(${oceanZMin}~${oceanZMax})，角色将站在沙滩上`,
+            entry.startTime,
+            `将 z 调整到 ${oceanZMax - 2} ~ ${oceanZMin + 2} 之间（建议 z=-8 ~ -20），确保角色在海水中`,
+            'BUG-SCENE-GEO-WATER'
+          );
+        }
+
+        // 如果角色在水中，检查 y 坐标是否合理
+        if (isInOcean && y < -0.5) {
+          this.addIssue('warning',
+            `角色 ${character} 在 BeachScene 水中但 y=${y} 过低，可能完全沉入水下不可见`,
+            entry.startTime,
+            `建议 y 设为 -0.2 ~ 0.0，使角色上半身露出水面`,
+            'BUG-SCENE-GEO-DEPTH'
+          );
+        }
+      }
+    }
   }
 
   _extractThemeKeywords(dialogue) {

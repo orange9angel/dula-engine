@@ -30,10 +30,10 @@ export class AnimationInspector extends InspectorBase {
       'Think', 'SitDown', 'CrossArms', 'FlailArms', 'LookUp', 'ReachOut',
       // Doraemon
       'PullOutRacket', 'TakeOutFromPocket', 'Spin', 'PanicSpin', 'NoseBlink',
-      'Float', 'WaddleWalk', 'ReachHand',
+      'Float', 'WaddleWalk', 'ReachHand', 'SearchPocket',
       // Nobita
       'Cry', 'LazyStretch', 'Grovel', 'StudyDespair', 'TriumphPose', 'RunAway',
-      'CrashLand', 'FallPanic', 'FlyPose',
+      'CrashLand', 'FallPanic', 'FlyPose', 'SwimPanic', 'SplashPaddle',
       // Shizuka
       'Curtsy', 'Giggle', 'PlayViolin', 'Scold', 'Blush', 'Baking', 'LookUpSky', 'WaveUp',
       // Xiaoyue / Xingzai
@@ -49,6 +49,23 @@ export class AnimationInspector extends InspectorBase {
               charAnimations.set(entry.character, []);
             }
             charAnimations.get(entry.character).push({ name: anim, start: entry.startTime, end: entry.endTime });
+          }
+        }
+      }
+
+      // Check Event:Animate actions (e.g., {Event:Animate|character=X|action=SwimPanic})
+      if (entry.storyEvents) {
+        for (const ev of entry.storyEvents) {
+          if (ev.name === 'Animate' && ev.options && ev.options.action) {
+            const action = ev.options.action;
+            usedAnimations.add(action);
+            const charName = ev.options.character || entry.character;
+            if (charName) {
+              if (!charAnimations.has(charName)) {
+                charAnimations.set(charName, []);
+              }
+              charAnimations.get(charName).push({ name: action, start: entry.startTime, end: entry.endTime });
+            }
           }
         }
       }
@@ -117,6 +134,9 @@ export class AnimationInspector extends InspectorBase {
       'CrashLand': ['Nobita'],
       'FallPanic': ['Nobita'],
       'FlyPose': ['Nobita'],
+      'SwimPanic': ['Nobita'],
+      'SplashPaddle': ['Nobita'],
+      'SearchPocket': ['Doraemon'],
       'Curtsy': ['Shizuka'],
       'Giggle': ['Shizuka'],
       'PlayViolin': ['Shizuka'],

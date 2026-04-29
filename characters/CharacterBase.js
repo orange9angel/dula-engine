@@ -169,6 +169,7 @@ export class CharacterBase {
         if (move.targetPos.y !== undefined) {
           const startY = move.startPos.y;
           this.mesh.position.y = startY + (move.targetPos.y - startY) * t;
+          this.baseY = this.mesh.position.y;
         }
         // face movement direction (only if horizontal movement is significant)
         const dx = move.targetPos.x - this.mesh.position.x;
@@ -182,6 +183,7 @@ export class CharacterBase {
         this.mesh.position.z = move.targetPos.z;
         if (move.targetPos.y !== undefined) {
           this.mesh.position.y = move.targetPos.y;
+          this.baseY = move.targetPos.y;
         }
         move.completed = true;
       }
