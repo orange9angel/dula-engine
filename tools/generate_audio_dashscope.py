@@ -642,36 +642,50 @@ async def generate():
                 continue
             # Resolve emotion-aware parameters
             params = resolve_voice_params(cfg, emotion)
-            model = params.get("model", "sambert-zhimao-v1")
-            emotion_label = ""
-            if emotion:
-                source = "tag" if entry.get("emotion") else "auto"
-                emotion_label = f" [{emotion}:{source}]"
-            print(f"Generating{emotion_label} {filename} via DashScope (model={model})...")
-            result = generate_with_dashscope(
-                dialogue,
-                model,
-                output_path=filepath,
-            )
-            if not result:
-                print(f"  DashScope failed for {filename}, falling back to edge-tts for this line...")
-                # Don't disable dashscope globally - just fallback for this one line
+            # If voice_config has 'voice' but no 'model', use edge-tts directly
+            if "voice" in params and "model" not in params:
+                print(f"Generating {filename} via edge-tts (voice={params['voice']})...")
                 try:
                     import edge_tts
                 except ImportError:
                     print("Please install edge-tts: pip install edge-tts")
                     sys.exit(1)
-                # Fallback to mp3
                 filename = f"{entry['index']:03d}_{char}.mp3"
                 filepath = os.path.join(OUTPUT_DIR, filename)
-                cfg = EDGE_VOICE_MAP.get(char)
-                if cfg:
-                    await generate_with_edgetts(
-                        dialogue, cfg["voice"], cfg.get("rate", "+0%"),
-                        cfg.get("pitch", "+0Hz"), cfg.get("volume", "+0%"), filepath
-                    )
-                else:
-                    continue
+                await generate_with_edgetts(
+                    dialogue, params["voice"], params.get("rate", "+0%"),
+                    params.get("pitch", "+0Hz"), params.get("volume", "+0%"), filepath
+                )
+            else:
+                model = params.get("model", "sambert-zhimao-v1")
+                emotion_label = ""
+                if emotion:
+                    source = "tag" if entry.get("emotion") else "auto"
+                    emotion_label = f" [{emotion}:{source}]"
+                print(f"Generating{emotion_label} {filename} via DashScope (model={model})...")
+                result = generate_with_dashscope(
+                    dialogue,
+                    model,
+                    output_path=filepath,
+                )
+                if not result:
+                    print(f"  DashScope failed for {filename}, falling back to edge-tts for this line...")
+                    try:
+                        import edge_tts
+                    except ImportError:
+                        print("Please install edge-tts: pip install edge-tts")
+                        sys.exit(1)
+                    # Fallback to mp3
+                    filename = f"{entry['index']:03d}_{char}.mp3"
+                    filepath = os.path.join(OUTPUT_DIR, filename)
+                    cfg = EDGE_VOICE_MAP.get(char)
+                    if cfg:
+                        await generate_with_edgetts(
+                            dialogue, cfg["voice"], cfg.get("rate", "+0%"),
+                            cfg.get("pitch", "+0Hz"), cfg.get("volume", "+0%"), filepath
+                        )
+                    else:
+                        continue
         else:
             cfg = EDGE_VOICE_MAP.get(char)
             if not cfg:

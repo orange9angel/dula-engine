@@ -217,12 +217,16 @@ export class CharacterBase {
     } else if (geoType === 'SphereGeometry') {
       // SphereGeometry (ellipse mouth like Doraemon): scale Y more aggressively
       // since the base scale is small (e.g., 0.3), we need larger relative change
-      // Y scale: base → base * 1.5 (open) for visible animation
-      const openness = this.mouthBaseScaleY * (1.0 + 0.5 * factor);
+      // Y scale: base → base * 3.0 (open) for clearly visible animation
+      const openness = this.mouthBaseScaleY * (1.0 + 2.0 * factor);
       this.mouth.scale.y = openness;
       // Slight X shrink to maintain ellipse shape
-      this.mouth.scale.x = this.mouthBaseScaleX * (1.0 - 0.1 * factor);
+      this.mouth.scale.x = this.mouthBaseScaleX * (1.0 - 0.2 * factor);
       this.mouth.scale.z = this.mouthBaseScaleZ;
+      // Also move mouth down slightly when opening to simulate jaw drop
+      if (this.mouthBaseY !== undefined) {
+        this.mouth.position.y = this.mouthBaseY - 0.05 * factor;
+      }
     } else {
       // TubeGeometry (smile curve) and others: use gentle Y scale
       // Y scale: 1.0 (closed) → 1.15 (open)

@@ -185,6 +185,15 @@ export class Storyboard {
         }
         this.characterScenes.get(entry.character).add(charSceneCursor);
       }
+      // Also include characters from Position tags
+      if (entry.positions) {
+        for (const pos of entry.positions) {
+          if (!this.characterScenes.has(pos.name)) {
+            this.characterScenes.set(pos.name, new Set());
+          }
+          this.characterScenes.get(pos.name).add(charSceneCursor);
+        }
+      }
     }
 
     // Spawn characters mentioned in SRT
