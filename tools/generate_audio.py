@@ -56,7 +56,7 @@ def resolve_voice_params(cfg, emotion=None):
     if emotion and emotion in cfg:
         variant = cfg[emotion].copy()
         # Inherit missing fields from default
-        for key in ("voice", "rate", "pitch", "volume"):
+        for key in ("voice", "model", "rate", "pitch", "volume"):
             if key not in variant and key in base:
                 variant[key] = base[key]
         return variant
@@ -838,7 +838,7 @@ async def generate(force_tts=False):
 
         # Resolve emotion-aware parameters
         params = resolve_voice_params(cfg, emotion)
-        if not params.get("voice"):
+        if not params.get("voice") and not params.get("model"):
             print(f"Warning: no voice resolved for {char} (emotion={emotion}), skipping.")
             continue
 

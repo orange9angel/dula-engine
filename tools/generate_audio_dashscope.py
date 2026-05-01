@@ -135,6 +135,18 @@ EDGE_VOICE_MAP = {
         "pitch": "+5Hz",
         "volume": "+0%",
     },
+    "Xiaoyue": {
+        "voice": "zh-CN-XiaoxiaoNeural",
+        "rate": "+5%",
+        "pitch": "+5Hz",
+        "volume": "+20%",
+    },
+    "Xingzai": {
+        "voice": "zh-CN-YunxiNeural",
+        "rate": "+0%",
+        "pitch": "+0Hz",
+        "volume": "+20%",
+    },
 }
 
 
