@@ -40,9 +40,15 @@ export class AudioInspector extends InspectorBase {
       for (const mEntry of manifest.entries) {
         const audioFile = mEntry.file;
         const audioPath = path.join(audioDir, audioFile);
-        const storyEntry = speakingEntries.find(
-          (e) => e.character === mEntry.character && Math.abs(e.startTime - mEntry.startTime) < 0.5
+        // Match by entry index (most reliable) or fall back to startTime + character
+        let storyEntry = speakingEntries.find(
+          (e) => e.index === mEntry.index
         );
+        if (!storyEntry) {
+          storyEntry = speakingEntries.find(
+            (e) => e.character === mEntry.character && Math.abs(e.startTime - mEntry.startTime) < 0.5
+          );
+        }
         fileMapping.push({
           entry: storyEntry || { character: mEntry.character, startTime: mEntry.startTime, endTime: mEntry.endTime, text: mEntry.dialogue },
           audioFile,

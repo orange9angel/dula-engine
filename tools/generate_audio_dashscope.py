@@ -58,17 +58,46 @@ if DASHSCOPE_API_KEY and dashscope:
     dashscope.api_key = DASHSCOPE_API_KEY
 
 # Load voice config from episode's voice_config.json if present
-VOICE_CONFIG_PATH = os.path.join(EPISODE, "voice_config.json")
+VOICE_CONFIG_PATH = os.path.join(EPISODE, "config", "voice_config.json")
 VOICE_MAP = {}
+
+
+def resolve_voice_params(cfg, emotion=None):
+    """Resolve TTS parameters with optional emotion override.
+
+    Supports two voice_config.json schemas:
+    1. Flat (legacy): { "voice": "...", "rate": "...", ... }
+    2. Emotion-aware: { "default": {...}, "excited": {...}, ... }
+
+    Emotion variants inherit from 'default' and override specific fields.
+    If emotion is not found, falls back to 'default', then flat config.
+    """
+    if "voice" in cfg or "model" in cfg:
+        return cfg
+    base = cfg.get("default", {})
+    if emotion and emotion in cfg:
+        variant = cfg[emotion].copy()
+        for key in ("voice", "model", "rate", "pitch", "volume"):
+            if key not in variant and key in base:
+                variant[key] = base[key]
+        return variant
+    return base
+
+
 if os.path.exists(VOICE_CONFIG_PATH):
     with open(VOICE_CONFIG_PATH, "r", encoding="utf-8") as f:
         voice_cfg = json.load(f)
-    for char, cfg in voice_cfg.get("voices", {}).items():
-        provider = cfg.get("provider", "dashscope")
-        if provider == "dashscope":
-            VOICE_MAP[char] = {"model": cfg.get("model", "sambert-zhimao-v1")}
+    for char, cfg in voice_cfg.items():
+        if isinstance(cfg, dict):
+            # Handle both flat and emotion-aware configs
+            base = resolve_voice_params(cfg)
+            if "model" in base or "voice" in base:
+                VOICE_MAP[char] = base
+            else:
+                # Default to a Sambert model if not specified
+                VOICE_MAP[char] = {"model": "sambert-zhimao-v1"}
         else:
-            VOICE_MAP[char] = {"model": cfg.get("model", cfg.get("voice", "zh-CN-XiaoxiaoNeural"))}
+            VOICE_MAP[char] = {"model": str(cfg)}
 
 # Default Sambert preset mapping — feel free to change these via env vars
 DEFAULT_VOICE_MAP = {
@@ -149,10 +178,17 @@ def parse_srt(text):
         content = "\n".join(text_lines)
         char_match = re.search(r"\[(\w+)\]", content)
         character = char_match.group(1) if char_match else None
+        # Extract emotion tag {Voice:excited} or {Voice:calm}
+        voice_emotion = None
+        voice_match = re.search(r"\{Voice:([^}]+)\}", content)
+        if voice_match:
+            voice_emotion = voice_match.group(1).strip()
+
         dialogue = re.sub(r"^@\w+\s*", "", content)
         dialogue = re.sub(r"\[\w+\]\s*", "", dialogue)
         dialogue = re.sub(r"\{Camera:[^}]+\}\s*", "", dialogue)
         dialogue = re.sub(r"\{Music:[^}]+\}\s*", "", dialogue)
+        dialogue = re.sub(r"\{Voice:[^}]+\}\s*", "", dialogue)
         dialogue = re.sub(r"\{[A-Za-z]\w*:[^}]+\}\s*", "", dialogue)
         dialogue = re.sub(r"\{(?!Camera:)\w+\}\s*", "", dialogue).strip()
 
@@ -182,6 +218,7 @@ def parse_srt(text):
             "endTime": end,
             "character": character,
             "dialogue": dialogue,
+            "emotion": voice_emotion,
         })
     return entries, music_cues
 
@@ -463,6 +500,100 @@ def mix_audio(manifest, bgm_path=None, sfx_events=None):
     print(f"Mixed audio written to: {mixed_path}")
 
 
+# Character-specific emotion dictionaries
+CHARACTER_EMOTION_MAP = {
+    "Doraemon": {
+        "exasperated": ["真是的", "每次.*都", "又.*乱来", "真是.*麻烦", "拿你.*办法"],
+        "proud": ["看我的", "没问题", "交给我", "放心.*吧", "简单"],
+        "teasing": ["嘿嘿", "嘻嘻", "开玩笑", "骗你的", "吓唬.*你"],
+    },
+    "Nobita": {
+        "defiant": ["才.*不会", "才.*没有", "才.*不是", "我.*学乖了", "这次.*真的"],
+        "whiny": ["可是.*嘛", "但是.*啊", "为什么.*我", "不公平", "好.*辛苦"],
+        "daydreaming": ["好想.*啊", "如果能.*就好了", "要是.*该多好", "真希望"],
+        "triumphant": ["哼哼", "怎么样", "厉害吧", "我.*做到了", "成功.*了"],
+    },
+    "Shizuka": {
+        "gentle": ["小心.*哦", "要注意", "慢慢来", "没关系.*的", "加油.*哦", "要小心.*"],
+        "curious": ["为什么.*呢", "怎么.*回事", "那是什么", "好奇怪", "真的吗", "怎么.*天上", "怎么.*飞"],
+        "concerned": ["没事吧", "没事吗", "还好吗", "要不要.*医务", "看起来.*累", "不要太.*了", "去医务室"],
+    },
+}
+
+
+def infer_emotion(dialogue, character=None):
+    """Infer emotion from dialogue text using punctuation, keywords, and character-specific patterns.
+
+    Returns one of: excited, panic, scared, happy, worried, calm, angry, sad,
+    exasperated, proud, teasing, defiant, whiny, daydreaming, triumphant,
+    gentle, curious, concerned
+    or None if no strong emotion detected.
+    """
+    if not dialogue:
+        return None
+
+    text = dialogue.strip()
+
+    # Character-specific emotion detection
+    if character and character in CHARACTER_EMOTION_MAP:
+        char_map = CHARACTER_EMOTION_MAP[character]
+        for emotion, patterns in char_map.items():
+            for pattern in patterns:
+                if re.search(pattern, text):
+                    return emotion
+
+    # Multiple exclamation marks = excited/panic
+    if re.search(r'[!！]{2,}', text):
+        if re.search(r'救命|救我|完蛋|死了|怎么办|不要.*啊|停.*下来', text):
+            return "panic"
+        return "excited"
+
+    # Single exclamation with distress/pain = panic (prioritize over scared)
+    if re.search(r'[！!]', text) and re.search(r'救命|救我|完蛋|死了|怎么办|不要.*啊|停.*下来|掉下来|好痛|好怕', text):
+        return "panic"
+
+    # Multiple question marks = confused/worried
+    if re.search(r'[?？]{2,}', text):
+        return "worried"
+
+    # Ellipsis-heavy = scared/weak/sad (but only if there are emotional cues)
+    if text.count('…') >= 3 or text.count('..') >= 3:
+        if re.search(r'痛|怕|晕|软|可怕|不敢', text):
+            return "scared"
+        if re.search(r'呜|难过|伤心|失望|可惜|对不起|算了|自由|真好|怀念|想.*了', text) or len(text) < 15:
+            return "sad"
+        return None
+
+    # Keyword matching
+    panic_keywords = r'救命|救我|完蛋|死了|怎么办|不要.*啊|停.*下来|掉下来|小心'
+    scared_keywords = r'好痛|好怕|好晕|腿软|可怕|不敢|好可怕|好危险|会死'
+    excited_keywords = r'太棒了|真的吗|超厉害|好厉害|太厉害了|好想|太好了|超.*的|最.*了'
+    happy_keywords = r'哈哈|嘻嘻|嘿嘿|真好|开心|高兴|喜欢|谢谢|拜拜'
+    worried_keywords = r'没事吧|小心|要不要|没事吗|还好吗|注意|危险|不好了'
+    angry_keywords = r'笨蛋|可恶|讨厌|烦人|气死|混蛋|乱来|每次.*都'
+    sad_keywords = r'呜呜|好难过|伤心|失望|可惜|对不起|算了'
+
+    if re.search(panic_keywords, text):
+        return "panic"
+    if re.search(scared_keywords, text):
+        return "scared"
+    if re.search(excited_keywords, text):
+        return "excited"
+    if re.search(happy_keywords, text):
+        return "happy"
+    if re.search(worried_keywords, text):
+        return "worried"
+    if re.search(angry_keywords, text):
+        return "angry"
+    if re.search(sad_keywords, text):
+        return "sad"
+
+    if re.search(r'[！!]', text):
+        return "excited"
+
+    return None
+
+
 async def generate():
     os.makedirs(OUTPUT_DIR, exist_ok=True)
 
@@ -487,6 +618,15 @@ async def generate():
     for entry in entries:
         char = entry["character"]
         dialogue = entry["dialogue"]
+        emotion = entry.get("emotion")
+
+        # Auto-infer emotion if not explicitly tagged
+        inferred = None
+        if not emotion:
+            inferred = infer_emotion(dialogue, character=char)
+            if inferred:
+                emotion = inferred
+
         if not char or not dialogue:
             continue
 
@@ -500,10 +640,17 @@ async def generate():
             if not cfg:
                 print(f"Warning: no voice config for {char}, skipping.")
                 continue
-            print(f"Generating {filename} via DashScope (model={cfg['model']})...")
+            # Resolve emotion-aware parameters
+            params = resolve_voice_params(cfg, emotion)
+            model = params.get("model", "sambert-zhimao-v1")
+            emotion_label = ""
+            if emotion:
+                source = "tag" if entry.get("emotion") else "auto"
+                emotion_label = f" [{emotion}:{source}]"
+            print(f"Generating{emotion_label} {filename} via DashScope (model={model})...")
             result = generate_with_dashscope(
                 dialogue,
-                cfg["model"],
+                model,
                 output_path=filepath,
             )
             if not result:
@@ -520,8 +667,8 @@ async def generate():
                 cfg = EDGE_VOICE_MAP.get(char)
                 if cfg:
                     await generate_with_edgetts(
-                        dialogue, cfg["voice"], cfg["rate"],
-                        cfg["pitch"], cfg["volume"], filepath
+                        dialogue, cfg["voice"], cfg.get("rate", "+0%"),
+                        cfg.get("pitch", "+0Hz"), cfg.get("volume", "+0%"), filepath
                     )
                 else:
                     continue
@@ -531,8 +678,8 @@ async def generate():
                 print(f"Warning: no voice config for {char}, skipping.")
                 continue
             await generate_with_edgetts(
-                dialogue, cfg["voice"], cfg["rate"],
-                cfg["pitch"], cfg["volume"], filepath
+                dialogue, cfg["voice"], cfg.get("rate", "+0%"),
+                cfg.get("pitch", "+0Hz"), cfg.get("volume", "+0%"), filepath
             )
 
         audio_duration = get_mp3_duration(filepath)

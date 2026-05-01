@@ -169,6 +169,8 @@ function parseStory(text) {
   let currentScene = null;
   let entryIndex = 0;
 
+  let currentEndTime = 0;
+
   for (let i = 0; i < lines.length; i++) {
     const line = lines[i].trim();
     if (!line || line.startsWith('//')) continue;
@@ -177,6 +179,20 @@ function parseStory(text) {
     const timeMatch = line.match(/(\d{2}:\d{2}:\d{2},\d{3})\s*-->\s*(\d{2}:\d{2}:\d{2},\d{3})/);
     if (timeMatch) {
       currentTime = parseSrtTime(timeMatch[1]);
+      currentEndTime = parseSrtTime(timeMatch[2]);
+      // Check if previous non-empty line was an SRT index number
+      let srtIndex = null;
+      for (let j = i - 1; j >= 0; j--) {
+        const prevLine = lines[j].trim();
+        if (!prevLine) continue;
+        if (/^\d+$/.test(prevLine)) {
+          srtIndex = parseInt(prevLine, 10);
+        }
+        break;
+      }
+      if (srtIndex !== null) {
+        entryIndex = srtIndex;
+      }
       continue;
     }
 
@@ -184,8 +200,11 @@ function parseStory(text) {
     const sceneMatch = line.match(/^@(\w+)/);
     if (sceneMatch) {
       currentScene = sceneMatch[1];
+      // Do NOT advance currentTime here — scene lines may share an SRT entry with
+      // character lines that follow. Time advancement happens when we see a new
+      // SRT time line or when a line explicitly ends (empty line).
       // Also push scene declaration as an entry so inspectors can access tags on it
-      entryIndex++;
+      // entryIndex is set from SRT index, do not increment here
       const sceneRawText = line.substring(sceneMatch[0].length);
       
       // Extract transition from scene line
@@ -234,7 +253,7 @@ function parseStory(text) {
     // Character line: [Doraemon]{WaveHand} 台词...
     const charMatch = line.match(/^\[([A-Z][a-zA-Z0-9_]*)\](.*)$/);
     if (charMatch) {
-      entryIndex++;
+      // entryIndex is set from SRT index when parsing time line, do not increment
       const rawText = charMatch[2];
       let text = rawText
         .replace(/\{Animation:[^}]+\}\s*/g, '')
@@ -247,7 +266,10 @@ function parseStory(text) {
         .replace(/\{Music:[^}]+\}\s*/g, '')
         .trim();
 
-      const duration = estimateDuration(text);
+      const srtDuration = currentEndTime - currentTime;
+      const estimatedDuration = estimateDuration(text);
+      // Use SRT endTime if it provides a reasonable window, otherwise fall back to estimate
+      const duration = srtDuration >= estimatedDuration * 0.5 ? srtDuration : estimatedDuration;
       const endTime = currentTime + duration;
 
       // Extract animations
@@ -367,9 +389,14 @@ function parseStory(text) {
     // But skip lines that are purely tags (Position, Music, etc. on their own lines)
     const isPureTagLine = /^\{[A-Z][a-zA-Z]+:[^}]+\}$/.test(line) || /^\{[A-Z][a-zA-Z]+\}$/.test(line) || /^(\{[A-Z][a-zA-Z]+:[^}]+\})+$/.test(line);
     
+    // Pure tag lines within the same SRT entry — do NOT advance currentTime.
+    // Time advancement only happens when we see a new SRT time line.
+    // (Previous logic incorrectly advanced time for pure tag lines, causing
+    // character lines in the same SRT entry to have zero duration.)
+    
     // Pure tag lines with Position — also push as entries for inspector visibility
     if (isPureTagLine && line.includes('Position:')) {
-      entryIndex++;
+      // entryIndex is set from SRT index, do not increment
       // Extract position ops
       const positionOps = [];
       const posRegex = /\{Position:([^}]+)\}/g;
@@ -407,7 +434,7 @@ function parseStory(text) {
     }
     
     if (line && !line.startsWith('{') && !line.startsWith('@') && !/^\d+$/.test(line) && !isPureTagLine) {
-      entryIndex++;
+      // entryIndex is set from SRT index, do not increment
       const duration = estimateDuration(line);
       const endTime = currentTime + duration;
       currentEntry = {

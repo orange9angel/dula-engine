@@ -80,7 +80,25 @@ export function runPreflight(context) {
     usedAnims.add(m[1]);
   }
 
-  const knownAnims = new Set(['Walk', 'Run', 'WaveHand', 'Jump', 'StompFoot', 'SwayBody', 'Nod', 'ShakeHead', 'TurnToCamera', 'SwingRacket', 'Bow', 'LookAround', 'PointForward', 'ScratchHead', 'HandsOnHips', 'ClapHands', 'Celebrate', 'Shrug', 'SurprisedJump', 'Tremble', 'Think', 'SitDown', 'CrossArms', 'FlailArms', 'LookUp', 'ReachOut', 'PullOutRacket', 'TakeOutFromPocket', 'Spin', 'PanicSpin', 'NoseBlink', 'Float', 'WaddleWalk', 'ReachHand', 'Cry', 'LazyStretch', 'Grovel', 'StudyDespair', 'TriumphPose', 'RunAway', 'CrashLand', 'FallPanic', 'FlyPose', 'Curtsy', 'Giggle', 'PlayViolin', 'Scold', 'Blush', 'Baking', 'LookUpSky', 'WaveUp', 'TandemFlight']);
+  // Dynamically scan dula-assets animation directories for known animations
+  const knownAnims = new Set();
+  const dulaAssetsAnimDir = path.join('node_modules', 'dula-assets', 'animations');
+  if (fs.existsSync(dulaAssetsAnimDir)) {
+    const categories = fs.readdirSync(dulaAssetsAnimDir, { withFileTypes: true })
+      .filter((d) => d.isDirectory())
+      .map((d) => d.name);
+    for (const cat of categories) {
+      const catDir = path.join(dulaAssetsAnimDir, cat);
+      const files = fs.readdirSync(catDir).filter((f) => f.endsWith('.js') && f !== 'index.js');
+      for (const f of files) {
+        knownAnims.add(f.replace('.js', ''));
+      }
+    }
+  }
+  // Fallback: also include hardcoded list in case scan fails
+  const fallbackAnims = ['Walk', 'Run', 'WaveHand', 'Jump', 'StompFoot', 'SwayBody', 'Nod', 'ShakeHead', 'TurnToCamera', 'SwingRacket', 'Bow', 'LookAround', 'PointForward', 'ScratchHead', 'HandsOnHips', 'ClapHands', 'Celebrate', 'Shrug', 'SurprisedJump', 'Tremble', 'Think', 'SitDown', 'CrossArms', 'FlailArms', 'LookUp', 'ReachOut', 'PullOutRacket', 'TakeOutFromPocket', 'Spin', 'PanicSpin', 'NoseBlink', 'Float', 'WaddleWalk', 'ReachHand', 'Cry', 'LazyStretch', 'Grovel', 'StudyDespair', 'TriumphPose', 'RunAway', 'CrashLand', 'FallPanic', 'FlyPose', 'Curtsy', 'Giggle', 'PlayViolin', 'Scold', 'Blush', 'Baking', 'LookUpSky', 'WaveUp', 'TandemFlight', 'PullOpenDrawer', 'JumpIntoDrawer'];
+  for (const anim of fallbackAnims) knownAnims.add(anim);
+
   const customAnimsDir = path.join(episodeDir, 'animations');
 
   for (const anim of usedAnims) {

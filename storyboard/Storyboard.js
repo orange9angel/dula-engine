@@ -1064,6 +1064,10 @@ export class Storyboard {
             if (ev.name === 'RescueTakecopter' && this.currentScene.rescueWithTakecopter) {
               this.currentScene.rescueWithTakecopter(ev.options.character || 'Nobita');
             }
+            // OpenDrawer: animate drawer sliding open (DrawerScene)
+            if (ev.name === 'OpenDrawer' && this.currentScene.openDrawer) {
+              this.currentScene.openDrawer();
+            }
           }
         }
       }

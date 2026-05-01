@@ -21,7 +21,7 @@ export class AnimationInspector extends InspectorBase {
     const usedAnimations = new Set();
     const charAnimations = new Map();
 
-    // Known animations from dula-assets
+    // Known animations from dula-assets — dynamically scan directories
     const knownAnims = new Set([
       // Common
       'Walk', 'Run', 'WaveHand', 'Jump', 'StompFoot', 'SwayBody', 'Nod', 'ShakeHead',
@@ -37,7 +37,11 @@ export class AnimationInspector extends InspectorBase {
       // Shizuka
       'Curtsy', 'Giggle', 'PlayViolin', 'Scold', 'Blush', 'Baking', 'LookUpSky', 'WaveUp',
       // Xiaoyue / Xingzai
-      'TandemFlight',
+      'TandemFlight', 'RidingPose',
+      // RockLee
+      'DynamicEntry', 'ThumbUp',
+      // Drawer scene (exists in dula-assets but not registered)
+      'PullOpenDrawer', 'JumpIntoDrawer',
     ]);
 
     for (const entry of entries) {

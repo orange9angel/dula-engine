@@ -201,14 +201,37 @@ export class CharacterBase {
   animateMouth(time, delta) {
     if (!this.mouth) return;
     this.mouth.visible = true;
-    // Pronounced mouth opening for clear visibility
-    const speed = 10;
+    const speed = 12;
     const factor = Math.abs(Math.sin(time * speed));
-    const openness = this.mouthBaseScaleY * (0.2 + 2.5 * factor);
-    this.mouth.scale.y = openness;
-    // Slight expansion in x/z to look like a real opening mouth
-    this.mouth.scale.x = this.mouthBaseScaleX * (1.0 + 0.3 * factor);
-    this.mouth.scale.z = this.mouthBaseScaleZ * (1.0 + 0.3 * factor);
+
+    // Detect mouth geometry type by checking constructor name
+    const geoType = this.mouth.geometry?.type || 'Unknown';
+
+    if (geoType === 'ConeGeometry') {
+      // ConeGeometry (jaw): use rotation to simulate opening/closing
+      // Closed: rotation.x = Math.PI (inverted, pointing up)
+      // Open: rotate slightly to drop the jaw down
+      const baseRot = this.mouthBaseRotationX !== undefined ? this.mouthBaseRotationX : Math.PI;
+      const jawOpen = 0.3 * factor; // max 0.3 rad (~17°) opening
+      this.mouth.rotation.x = baseRot - jawOpen;
+    } else if (geoType === 'SphereGeometry') {
+      // SphereGeometry (ellipse mouth like Doraemon): scale Y more aggressively
+      // since the base scale is small (e.g., 0.3), we need larger relative change
+      // Y scale: base → base * 1.5 (open) for visible animation
+      const openness = this.mouthBaseScaleY * (1.0 + 0.5 * factor);
+      this.mouth.scale.y = openness;
+      // Slight X shrink to maintain ellipse shape
+      this.mouth.scale.x = this.mouthBaseScaleX * (1.0 - 0.1 * factor);
+      this.mouth.scale.z = this.mouthBaseScaleZ;
+    } else {
+      // TubeGeometry (smile curve) and others: use gentle Y scale
+      // Y scale: 1.0 (closed) → 1.15 (open)
+      const openness = this.mouthBaseScaleY * (1.0 + 0.15 * factor);
+      this.mouth.scale.y = openness;
+      // No x/z expansion — prevents lip from sliding off face
+      this.mouth.scale.x = this.mouthBaseScaleX;
+      this.mouth.scale.z = this.mouthBaseScaleZ;
+    }
   }
 
   animateBody(time, delta) {

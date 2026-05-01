@@ -29,6 +29,9 @@ export class CameraInspector extends InspectorBase {
 
     // Check multi-character scenes with single-character tracking
     this._checkMultiCharacterTracking(entries);
+
+    // Check for camera pointing at back of character's head
+    this._checkBackOfHead(entries, storyText);
   }
 
   _extractCameraTags(storyText) {
@@ -194,6 +197,446 @@ export class CameraInspector extends InspectorBase {
           this.addIssue('info', `条目中有 ${nearbyChars.size + 1} 个角色，但相机只跟踪 ${entry.character}，其他角色可能出画`, entry.startTime, '考虑使用 TwoShot 或交替跟踪', 'BUG-7');
         }
       }
+    }
+  }
+
+  /**
+   * Check if camera is pointing at the back of character's head.
+   *
+   * Geometric approach: compute the angle between character's facing direction
+   * and the vector from character to camera. If angle > 90°, camera is behind.
+   *
+   * This is a static analysis — we compute camera position from the camera move
+   * parameters and character position/face from Position tags.
+   */
+  _checkBackOfHead(entries, storyText) {
+    // Build a scene state tracker: for each entry, track the current active scene
+    // and character positions that have been set up to that point.
+    const sceneStates = this._buildSceneStates(entries);
+
+    for (let i = 0; i < entries.length; i++) {
+      const entry = entries[i];
+
+      // Support both StoryParser format (cameraMove) and inspect-team format (camera)
+      let moveName, params;
+      if (entry.cameraMove && typeof entry.cameraMove === 'object') {
+        moveName = entry.cameraMove.name;
+        params = entry.cameraMove.options || {};
+      } else if (entry.camera && typeof entry.camera === 'string') {
+        moveName = entry.camera;
+        // Parse camera params from the raw text for inspect-team format
+        params = this._extractCameraParamsFromEntry(entry);
+      } else {
+        continue;
+      }
+
+      if (!entry.character) continue;
+
+      // Get the current scene state at this entry's time
+      const stateAtEntry = sceneStates[i];
+      if (!stateAtEntry || !stateAtEntry.scene) continue;
+
+      // Get the speaking character's position and facing direction
+      const charState = this._getCharacterStateFromScene(stateAtEntry, entry.character);
+      if (!charState) continue;
+
+      // Compute camera position based on camera move type
+      const camPos = this._computeCameraPosition(moveName, params, charState, stateAtEntry);
+      if (!camPos) continue;
+
+      // Compute vector from character to camera
+      const toCamera = { x: camPos.x - charState.x, z: camPos.z - charState.z };
+      const toCameraLen = Math.sqrt(toCamera.x * toCamera.x + toCamera.z * toCamera.z);
+      if (toCameraLen < 0.001) continue;
+
+      // Normalize
+      toCamera.x /= toCameraLen;
+      toCamera.z /= toCameraLen;
+
+      // Character facing direction (already normalized in _getCharacterStateFromScene)
+      const faceDir = charState.faceDir;
+
+      // Dot product: positive = camera in front of character (angle < 90°)
+      //              negative = camera behind character (angle > 90°)
+      const dot = faceDir.x * toCamera.x + faceDir.z * toCamera.z;
+
+      if (dot < -0.1) {
+        // Camera is clearly behind the character (> 95°)
+        this.addIssue('warning',
+          `条目 ${entry.index}: ${moveName} 运镜下相机位于角色 ${entry.character} 身后（夹角约 ${Math.acos(Math.abs(dot)) * 180 / Math.PI | 0}°），观众将看到后脑勺而非面部表情`,
+          entry.startTime,
+          this._suggestFixForBackOfHead(moveName, params, entry.character),
+          'BUG-CAM-BACK-OF-HEAD'
+        );
+      } else if (dot < 0.2) {
+        // Camera is at side/back (80°-95°), might catch profile or partial back
+        this.addIssue('info',
+          `条目 ${entry.index}: ${moveName} 运镜下相机位于角色 ${entry.character} 侧后方（夹角约 ${Math.acos(Math.abs(dot)) * 180 / Math.PI | 0}°），可能以侧面/后脑勺为主`,
+          entry.startTime,
+          this._suggestFixForBackOfHead(moveName, params, entry.character),
+          'BUG-CAM-SIDE-BACK'
+        );
+      }
+    }
+  }
+
+  /**
+   * Extract camera parameters from entry raw text for inspect-team format.
+   */
+  _extractCameraParamsFromEntry(entry) {
+    const params = {};
+    const rawText = entry.rawText || '';
+    const camMatch = rawText.match(/\{Camera:([^}]+)\}/);
+    if (!camMatch) return params;
+
+    const inner = camMatch[1];
+    const parts = inner.split('|').map((s) => s.trim());
+    for (let i = 1; i < parts.length; i++) {
+      const eqIdx = parts[i].indexOf('=');
+      if (eqIdx === -1) {
+        params[parts[i]] = true;
+        continue;
+      }
+      const key = parts[i].slice(0, eqIdx).trim();
+      const val = parts[i].slice(eqIdx + 1).trim();
+      if (val.includes(',')) {
+        params[key] = val.split(',').map((v) => {
+          const n = parseFloat(v.trim());
+          return isNaN(n) ? v.trim() : n;
+        });
+      } else {
+        const n = parseFloat(val);
+        params[key] = isNaN(n) ? val : n;
+      }
+    }
+    return params;
+  }
+
+  /**
+   * Build scene state tracker for each entry index.
+   * Returns array where each element is { scene, positions: { charName: {x, z, face} } }
+   * representing the active scene and character positions at that point in time.
+   */
+  _buildSceneStates(entries) {
+    const states = [];
+    let currentScene = null;
+    let currentPositions = {}; // charName -> {x, z, face}
+
+    for (let i = 0; i < entries.length; i++) {
+      const entry = entries[i];
+
+      // If this entry has a scene switch, update current scene
+      // Only clear positions when the scene actually changes (not on every entry that has scene field)
+      if (entry.scene && entry.scene !== currentScene) {
+        currentScene = entry.scene;
+        // New scene: clear positions (they will be set by Position tags in this or later entries)
+        currentPositions = {};
+      }
+
+      // If this entry has Position tags, update character positions
+      // Support both StoryParser format (positions) and inspect-team format (positionOps)
+      const posList = entry.positions || entry.positionOps;
+      if (posList && posList.length > 0) {
+        for (const pos of posList) {
+          const charName = pos.name || pos.character;
+          if (charName) {
+            const options = pos.options || {};
+            currentPositions[charName] = {
+              x: options.x ?? 0,
+              z: options.z ?? 0,
+              y: options.y ?? 0,
+              face: options.face ?? 'forward',
+            };
+          }
+        }
+      }
+
+      states.push({
+        scene: currentScene,
+        positions: { ...currentPositions },
+      });
+    }
+
+    return states;
+  }
+
+  /**
+   * Get character's position and facing direction from scene state.
+   * Returns { x, z, faceDir: {x, z} } or null.
+   */
+  _getCharacterStateFromScene(sceneState, characterName) {
+    const pos = sceneState.positions[characterName];
+    if (!pos) return null;
+
+    const x = pos.x;
+    const z = pos.z;
+    const face = pos.face;
+
+    let faceDir;
+    if (face === 'forward') {
+      faceDir = { x: 0, z: 1 };
+    } else if (face === 'center') {
+      faceDir = { x: -x, z: -z };
+      const len = Math.sqrt(faceDir.x * faceDir.x + faceDir.z * faceDir.z);
+      if (len > 0.001) {
+        faceDir.x /= len;
+        faceDir.z /= len;
+      } else {
+        faceDir = { x: 0, z: 1 };
+      }
+    } else if (face === 'back') {
+      faceDir = { x: 0, z: -1 };
+    } else if (face === 'left') {
+      faceDir = { x: -1, z: 0 };
+    } else if (face === 'right') {
+      faceDir = { x: 1, z: 0 };
+    } else if (face && typeof face === 'string') {
+      // face=AnotherCharacter — compute direction toward that character
+      const targetPos = sceneState.positions[face];
+      if (targetPos) {
+        faceDir = { x: targetPos.x - x, z: targetPos.z - z };
+        const len = Math.sqrt(faceDir.x * faceDir.x + faceDir.z * faceDir.z);
+        if (len > 0.001) {
+          faceDir.x /= len;
+          faceDir.z /= len;
+        } else {
+          faceDir = { x: 0, z: 1 };
+        }
+      } else {
+        faceDir = { x: 0, z: 1 };
+      }
+    } else {
+      // Default: face forward (+Z)
+      faceDir = { x: 0, z: 1 };
+    }
+
+    return { x, z, faceDir };
+  }
+
+  /**
+   * Compute camera position based on camera move type and parameters.
+   * Simplified geometric model matching the runtime camera implementations.
+   */
+  _computeCameraPosition(moveName, params, charState, sceneState) {
+    const cx = charState.x;
+    const cz = charState.z;
+
+    switch (moveName) {
+      case 'CloseUp':
+      case 'TrackingCloseUp': {
+        // Runtime CloseUp places camera at: lookAtPos + camDir * distance
+        // where camDir is computed from character's actual facing direction (mesh.quaternion)
+        // Camera is IN FRONT of the character to see the face.
+        const distance = params.distance ?? 1.8;
+        const sideAngleDeg = params.sideAngle ?? 0;
+        const sideAngle = sideAngleDeg * Math.PI / 180;
+
+        // Character facing direction (where the face points)
+        const fx = charState.faceDir.x;
+        const fz = charState.faceDir.z;
+
+        // Side vector (perpendicular to facing, pointing right)
+        // cross(forward, up) where up=(0,1,0)
+        const sx = -fz;
+        const sz = fx;
+
+        // camDir = forward * cos(sideAngle) + side * sin(sideAngle)
+        const camDirX = fx * Math.cos(sideAngle) + sx * Math.sin(sideAngle);
+        const camDirZ = fz * Math.cos(sideAngle) + sz * Math.sin(sideAngle);
+
+        // Camera is in front of character (along camDir)
+        return {
+          x: cx + camDirX * distance,
+          z: cz + camDirZ * distance,
+        };
+      }
+
+      case 'OverShoulder': {
+        // Camera is behind 'shooter', looking at 'target'
+        const shooter = params.shooter;
+        const target = params.target ?? params.subject;
+        const distance = params.distance ?? 2.5;
+
+        if (!shooter) return null;
+
+        const shooterState = this._getCharacterStateFromScene(sceneState, shooter);
+        if (!shooterState) return null;
+
+        // If shooter is the speaking character, camera is behind them
+        // If target is the speaking character, camera is in front of them (good)
+        if (target) {
+          const targetState = this._getCharacterStateFromScene(sceneState, target);
+          if (targetState) {
+            // Direction from shooter to target
+            const dx = targetState.x - shooterState.x;
+            const dz = targetState.z - shooterState.z;
+            const len = Math.sqrt(dx * dx + dz * dz);
+            if (len > 0.001) {
+              // Camera is behind shooter, looking toward target
+              return {
+                x: shooterState.x - (dx / len) * distance,
+                z: shooterState.z - (dz / len) * distance,
+              };
+            }
+          }
+        }
+
+        // Fallback: camera behind shooter
+        return {
+          x: shooterState.x - shooterState.faceDir.x * distance,
+          z: shooterState.z - shooterState.faceDir.z * distance,
+        };
+      }
+
+      case 'FollowCharacter': {
+        const offset = params.offset;
+        if (Array.isArray(offset) && offset.length >= 3) {
+          // offset is relative to character's local space
+          // offset[0]=right, offset[1]=up, offset[2]=forward
+          const right = offset[0];
+          const up = offset[1]; // not used for XZ
+          const forward = offset[2];
+
+          const fx = charState.faceDir.x;
+          const fz = charState.faceDir.z;
+          const sx = fz;
+          const sz = -fx;
+
+          return {
+            x: cx + fx * forward + sx * right,
+            z: cz + fz * forward + sz * right,
+          };
+        }
+        return null;
+      }
+
+      case 'TwoShot': {
+        // Camera is perpendicular to the line between two characters
+        // We need to determine which character is speaking and where camera is
+        const left = params.left;
+        const right = params.right;
+        const characterA = params.characterA ?? left;
+        const characterB = params.characterB ?? right;
+        const distance = params.distance ?? 5.0;
+
+        if (!characterA || !characterB) return null;
+
+        const stateA = this._getCharacterStateFromScene(sceneState, characterA);
+        const stateB = this._getCharacterStateFromScene(sceneState, characterB);
+        if (!stateA || !stateB) return null;
+
+        const midX = (stateA.x + stateB.x) / 2;
+        const midZ = (stateA.z + stateB.z) / 2;
+        const lineX = stateB.x - stateA.x;
+        const lineZ = stateB.z - stateA.z;
+
+        // Perpendicular direction
+        const perpX = -lineZ;
+        const perpZ = lineX;
+        const perpLen = Math.sqrt(perpX * perpX + perpZ * perpZ);
+        if (perpLen < 0.001) return null;
+
+        return {
+          x: midX + (perpX / perpLen) * distance,
+          z: midZ + (perpZ / perpLen) * distance,
+        };
+      }
+
+      case 'Static': {
+        const position = params.position;
+        if (Array.isArray(position) && position.length >= 3) {
+          return { x: position[0], z: position[2] };
+        }
+        return null;
+      }
+
+      case 'ZoomIn':
+      case 'ZoomOut': {
+        // ZoomIn/ZoomOut are dolly zooms: camera moves toward/away from targetPos.
+        // targetPos is what the camera LOOKS AT, not where the camera is.
+        // The actual camera position depends on the starting position (unknown at static analysis time).
+        // Since we can't determine the camera direction without knowing the start position,
+        // skip back-of-head detection for ZoomIn/ZoomOut with targetPos.
+        if (params.targetPos && Array.isArray(params.targetPos)) {
+          return null; // Cannot reliably determine camera position
+        }
+        // If targeting a character directly (no targetPos), compute like CloseUp
+        if (params.characterName) {
+          const targetState = this._getCharacterStateFromScene(sceneState, params.characterName);
+          if (targetState) {
+            const distance = params.distance ?? 3;
+            return {
+              x: targetState.x + targetState.faceDir.x * distance,
+              z: targetState.z + targetState.faceDir.z * distance,
+            };
+          }
+        }
+        return null;
+      }
+
+      case 'Orbit': {
+        // Orbit around center point — camera moves along an arc.
+        // If the orbit covers > 180°, the camera will see the character from multiple angles
+        // including the front, so we only flag if the orbit range is small (< 180°).
+        const center = params.center;
+        const startAngle = params.startAngle ?? 0;
+        const endAngle = params.endAngle ?? Math.PI / 2;
+        const orbitRange = Math.abs(endAngle - startAngle);
+
+        // If orbit covers more than 180°, camera will see front at some point — skip
+        if (orbitRange >= Math.PI - 0.1) {
+          return null;
+        }
+
+        if (Array.isArray(center) && center.length >= 3) {
+          const radius = params.radius ?? 5;
+          // Camera at startAngle position
+          return {
+            x: center[0] + Math.cos(startAngle) * radius,
+            z: center[2] + Math.sin(startAngle) * radius,
+          };
+        }
+        return null;
+      }
+
+      default:
+        return null;
+    }
+  }
+
+  /**
+   * Generate a fix suggestion based on camera type.
+   */
+  _suggestFixForBackOfHead(moveName, params, characterName) {
+    switch (moveName) {
+      case 'CloseUp':
+      case 'TrackingCloseUp': {
+        const sideAngle = params.sideAngle ?? 0;
+        if (Math.abs(sideAngle) < 15) {
+          return `添加 sideAngle=30（或 -30）让相机从侧面拍摄 ${characterName}，确保面部可见`;
+        }
+        return `sideAngle=${sideAngle} 仍可能拍到后脑勺，尝试 sideAngle=45 或改用 TwoShot`;
+      }
+      case 'OverShoulder': {
+        const shooter = params.shooter;
+        const target = params.target ?? params.subject;
+        if (shooter === characterName) {
+          return `OverShoulder 中 shooter=${shooter} 是说话角色，将 shooter 改为 ${target || '另一个角色'}，让相机从 ${characterName} 正面拍摄`;
+        }
+        return `检查 shooter=${shooter} 和 target=${target} 的位置关系，确保相机在 ${characterName} 正面`;
+      }
+      case 'FollowCharacter': {
+        const offset = params.offset;
+        if (Array.isArray(offset)) {
+          return `FollowCharacter offset=[${offset.join(',')}] 中 Z=${offset[2]} 为正值（角色身后），改为负值如 [${offset[0]},${offset[1]},${-Math.abs(offset[2])}]`;
+        }
+        return `调整 FollowCharacter offset，确保相机在角色前方（offset Z 为负值）`;
+      }
+      case 'TwoShot': {
+        return `TwoShot 中相机位于两角色侧面，${characterName} 可能侧对镜头。如需要面部特写，单独加一条 CloseUp|characterName=${characterName}|sideAngle=30`;
+      }
+      default:
+        return `检查 {Position:${characterName}|face=...} 方向，确保角色面朝相机；或调整 ${moveName} 参数`;
     }
   }
 }

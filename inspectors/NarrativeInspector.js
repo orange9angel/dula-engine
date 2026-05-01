@@ -37,7 +37,7 @@ export class NarrativeInspector extends InspectorBase {
       { regex: /包裹|快递|盒子|箱子|背包/, name: '包裹/箱子', propType: 'package', severity: 'error' },
       { regex: /手机|电话|打电话/, name: '手机', propType: 'phone', severity: 'warning' },
       { regex: /书|书本|笔记本|日记/, name: '书/笔记本', propType: 'book', severity: 'warning' },
-      { regex: /球|篮球|足球|网球/, name: '球', propType: 'ball', severity: 'error' },
+      { regex: /篮球|足球|网球|打球|拍球|传球|踢球/, name: '球', propType: 'ball', severity: 'error' },
       { regex: /雨伞|伞|撑伞/, name: '雨伞', propType: 'umbrella', severity: 'error' },
       { regex: /花|花朵|一束花|玫瑰花/, name: '花', propType: 'flower', severity: 'warning' },
       { regex: /照片|相片|画像/, name: '照片', propType: 'photo', severity: 'warning' },
