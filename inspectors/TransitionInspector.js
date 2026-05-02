@@ -54,10 +54,11 @@ export class TransitionInspector extends InspectorBase {
 
       // ── D11-2: 角色直接消失（无退场动画）──
       // 在场景A有台词的角色，在场景切换前是否有退场动画
+      // 如果场景切换有 Fade/Wipe 等全局过渡效果，豁免角色消失检查（视觉过渡已交代场景切换）
       const disappearingChars = [...prevChars].filter((c) => !currChars.has(c));
       for (const char of disappearingChars) {
         const hasExitAnim = this._hasExitAnimation(entries, char, prev.scene, prev.endTime, curr.startTime);
-        if (!hasExitAnim) {
+        if (!hasExitAnim && !hasTransition) {
           this.addIssue('error',
             `角色 ${char} 在场景 ${prev.scene} 中消失后无退场动画，直接"凭空消失"。观众不知道 ${char} 去了哪里`,
             prev.endTime,
@@ -168,8 +169,10 @@ export class TransitionInspector extends InspectorBase {
     const lines = storyText.split('\n');
     for (let i = 0; i < lines.length; i++) {
       if (lines[i].includes(`@${sceneName}`)) {
-        // 检查场景声明行及下几行是否有 Transition
-        for (let j = i; j < Math.min(i + 3, lines.length); j++) {
+        // 检查场景声明行及上下几行是否有 Transition
+        // Transition 可能在场景切换前的独立条目中（上一行/上几行）
+        // 也可能在场景声明的同一行或紧接着的行
+        for (let j = Math.max(0, i - 5); j < Math.min(i + 3, lines.length); j++) {
           if (/\{Transition:[^}]+\}/.test(lines[j])) {
             return true;
           }

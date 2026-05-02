@@ -49,7 +49,7 @@ export class SceneInspector extends InspectorBase {
     for (const sceneName of scenes) {
       // Note: we can't fully check SceneRegistry without loading dula-assets,
       // but we can check against known scenes and bootstrap explicit registrations
-      const knownScenes = ['RoomScene', 'ParkScene', 'SkyScene', 'StarSkyScene', 'NightRoomScene', 'NightStreetScene', 'BasketballArenaScene', 'GLTFArenaScene', 'BeachScene'];
+      const knownScenes = ['RoomScene', 'ParkScene', 'SkyScene', 'StarSkyScene', 'NightRoomScene', 'NightStreetScene', 'BasketballArenaScene', 'GLTFArenaScene', 'BeachScene', 'BrightMoonScene', 'FrightZoneScene', 'WhisperingWoodsScene'];
       const isRegistered = registeredScenes.has(sceneName) || knownScenes.includes(sceneName);
 
       if (!isRegistered && registeredScenes.size > 0) {
@@ -192,8 +192,11 @@ export class SceneInspector extends InspectorBase {
       { regex: /(雪|下雪|冬天|寒冷)/g, theme: '雪景/冬天', minCount: 2 },
       // 海边主题：降低阈值到1，因为"海边"是强场景指示词，出现1次就应触发
       { regex: /(海边|海滩|海洋|沙滩|浪花|海水|海里|海浪)/g, theme: '海边/海滩', minCount: 1 },
-      { regex: /(森林|树林|树木|丛林)/g, theme: '森林', minCount: 2 },
+      { regex: /(森林|树林|树木|丛林|低语)/g, theme: '森林', minCount: 2 },
       { regex: /(沙漠|沙丘|荒漠)/g, theme: '沙漠', minCount: 2 },
+      { regex: /(城堡|宫殿|王室|公主)/g, theme: '城堡/宫殿', minCount: 1 },
+      { regex: /(军团|霍达克| Horde|邪恶|反派)/g, theme: '军团/邪恶', minCount: 1 },
+      { regex: /(变身|希瑞|力量|剑)/g, theme: '变身/力量', minCount: 1 },
     ];
 
     for (const p of patterns) {
@@ -217,6 +220,9 @@ export class SceneInspector extends InspectorBase {
     if (/Snow|雪|冰|冬天/i.test(sceneName)) sceneTraits.push('雪景/冬天');
     if (/Rain|雨|下雨/i.test(sceneName)) sceneTraits.push('雨天');
     if (/Night|夜晚|黑夜|夜间|星空|星夜/i.test(sceneName)) sceneTraits.push('夜晚/星空');
+    if (/BrightMoon|明月|城堡|宫殿|王室/i.test(sceneName)) sceneTraits.push('城堡/宫殿');
+    if (/FrightZone|恐惧|军团|基地|工业/i.test(sceneName)) sceneTraits.push('工业/基地');
+    if (/WhisperingWoods|森林|低语|魔法/i.test(sceneName)) sceneTraits.push('森林/魔法');
 
     if (sceneTraits.length === 0) return null;
 
@@ -233,6 +239,10 @@ export class SceneInspector extends InspectorBase {
       { theme: '沙漠', trait: '室内', reason: '沙漠主题不应主要发生在室内' },
       { theme: '沙漠', trait: '城市街道', reason: '沙漠主题不应主要发生在城市街道' },
       { theme: '雪景/冬天', trait: '室内', reason: '雪景主题不应完全发生在室内' },
+      { theme: '城堡/宫殿', trait: '户外/公园', reason: '城堡主题需要宫殿场景，而非普通公园' },
+      { theme: '城堡/宫殿', trait: '工业/基地', reason: '城堡主题不应发生在工业基地' },
+      { theme: '军团/邪恶', trait: '城堡/宫殿', reason: '军团主题需要阴暗基地场景' },
+      { theme: '变身/力量', trait: '工业/基地', reason: '变身主题更适合魔法/自然场景' },
     ];
 
     for (const theme of themeKeywords) {

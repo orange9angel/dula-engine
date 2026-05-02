@@ -47,7 +47,7 @@ async function renderFrames() {
   const endFrame = Math.ceil(endTime * fps);
   const segmentFrames = endFrame - startFrame;
 
-  console.log(`[Segment] start=${startTime}s, duration=${endTime - startTime}s, frames=${segmentFrames}, frameOffset=${FRAME_OFFSET}`);
+  // console.log(`[Segment] start=${startTime}s, duration=${endTime - startTime}s, frames=${segmentFrames}, frameOffset=${FRAME_OFFSET}`);
   if (window.setFrameOffset) {
     window.setFrameOffset(FRAME_OFFSET);
   }
@@ -100,10 +100,10 @@ async function renderFrames() {
     const frameIdx = i - startFrame + 1;
     const absFrameIdx = frameIdx + FRAME_OFFSET;
     await window.saveFrame(absFrameIdx, base64);
-    // Also log absolute frame number for debugging
-    if (frameIdx % 30 === 0 || frameIdx === segmentFrames) {
-      console.log(`[Render] frame ${absFrameIdx} (segment ${frameIdx}/${segmentFrames})`);
-    }
+    // Debug: log absolute frame number
+    // if (frameIdx % 30 === 0 || frameIdx === segmentFrames) {
+    //   console.log(`[Render] frame ${absFrameIdx} (segment ${frameIdx}/${segmentFrames})`);
+    // }
   }
 
   window.onRenderComplete(segmentFrames);

@@ -5,6 +5,7 @@ export class CharacterBase {
     this.name = name;
     this.mesh = new THREE.Group();
     this.mesh.name = name;
+    this.boundingRadius = 0.5; // Override in subclass for accurate sizing
     this.mouth = null;
     this.mouthBaseScaleX = 1;
     this.mouthBaseScaleY = 1;
@@ -217,8 +218,8 @@ export class CharacterBase {
     } else if (geoType === 'SphereGeometry') {
       // SphereGeometry (ellipse mouth like Doraemon): scale Y more aggressively
       // since the base scale is small (e.g., 0.3), we need larger relative change
-      // Y scale: base → base * 3.0 (open) for clearly visible animation
-      const openness = this.mouthBaseScaleY * (1.0 + 2.0 * factor);
+      // Y scale: base → base * 1.8 (open) for visible but not extreme animation
+      const openness = this.mouthBaseScaleY * (1.0 + 0.8 * factor);
       this.mouth.scale.y = openness;
       // Slight X shrink to maintain ellipse shape
       this.mouth.scale.x = this.mouthBaseScaleX * (1.0 - 0.2 * factor);

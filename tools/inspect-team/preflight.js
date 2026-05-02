@@ -24,7 +24,7 @@ export function runPreflight(context) {
   const sceneMatches = storyText.matchAll(/^@(\w+)/gm);
   for (const m of sceneMatches) scenes.add(m[1]);
 
-  const knownScenes = ['RoomScene', 'ParkScene', 'SkyScene', 'StarSkyScene', 'NightRoomScene', 'NightStreetScene', 'BasketballArenaScene', 'GLTFArenaScene', 'BeachScene'];
+  const knownScenes = ['RoomScene', 'ParkScene', 'SkyScene', 'StarSkyScene', 'NightRoomScene', 'NightStreetScene', 'BasketballArenaScene', 'GLTFArenaScene', 'BeachScene', 'BrightMoonScene', 'FrightZoneScene', 'WhisperingWoodsScene'];
   const customScenesDir = path.join(episodeDir, 'scenes');
 
   for (const scene of scenes) {
@@ -48,7 +48,7 @@ export function runPreflight(context) {
   const charMatches = storyText.matchAll(/^\[([A-Z][a-zA-Z0-9_]*)\]/gm);
   for (const m of charMatches) characters.add(m[1]);
 
-  const knownChars = ['Doraemon', 'Nobita', 'Shizuka', 'Xiaoyue', 'Xingzai', 'RockLee'];
+  const knownChars = ['Doraemon', 'Nobita', 'Shizuka', 'Xiaoyue', 'Xingzai', 'RockLee', 'SheRa', 'Adora', 'Catra', 'Hordak'];
   const customCharsDir = path.join(episodeDir, 'characters');
 
   for (const char of characters) {
@@ -81,18 +81,25 @@ export function runPreflight(context) {
   }
 
   // Dynamically scan dula-assets animation directories for known animations
+  // Supports both npm-installed (node_modules) and local file: linked packages
   const knownAnims = new Set();
-  const dulaAssetsAnimDir = path.join('node_modules', 'dula-assets', 'animations');
-  if (fs.existsSync(dulaAssetsAnimDir)) {
-    const categories = fs.readdirSync(dulaAssetsAnimDir, { withFileTypes: true })
-      .filter((d) => d.isDirectory())
-      .map((d) => d.name);
-    for (const cat of categories) {
-      const catDir = path.join(dulaAssetsAnimDir, cat);
-      const files = fs.readdirSync(catDir).filter((f) => f.endsWith('.js') && f !== 'index.js');
-      for (const f of files) {
-        knownAnims.add(f.replace('.js', ''));
+  const possibleAnimDirs = [
+    path.join('node_modules', 'dula-assets', 'animations'),
+    path.join('..', 'dula-assets', 'animations'),
+  ];
+  for (const dulaAssetsAnimDir of possibleAnimDirs) {
+    if (fs.existsSync(dulaAssetsAnimDir)) {
+      const categories = fs.readdirSync(dulaAssetsAnimDir, { withFileTypes: true })
+        .filter((d) => d.isDirectory())
+        .map((d) => d.name);
+      for (const cat of categories) {
+        const catDir = path.join(dulaAssetsAnimDir, cat);
+        const files = fs.readdirSync(catDir).filter((f) => f.endsWith('.js') && f !== 'index.js');
+        for (const f of files) {
+          knownAnims.add(f.replace('.js', ''));
+        }
       }
+      // Continue scanning other dirs to merge all available animations
     }
   }
   // Fallback: also include hardcoded list in case scan fails

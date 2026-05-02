@@ -40,6 +40,8 @@ export class AnimationInspector extends InspectorBase {
       'TandemFlight', 'RidingPose',
       // RockLee
       'DynamicEntry', 'ThumbUp',
+      // She-Ra
+      'DrawSword', 'BattleStance', 'SwordSlash', 'ShieldBlock', 'Transform', 'PowerGlow',
       // Drawer scene (exists in dula-assets but not registered)
       'PullOpenDrawer', 'JumpIntoDrawer',
     ]);
@@ -149,6 +151,13 @@ export class AnimationInspector extends InspectorBase {
       'Baking': ['Shizuka'],
       'LookUpSky': ['Shizuka'],
       'WaveUp': ['Shizuka'],
+      // She-Ra animations (best matched to SheRa/Adora)
+      'DrawSword': ['SheRa', 'Adora'],
+      'BattleStance': ['SheRa', 'Adora'],
+      'SwordSlash': ['SheRa', 'Adora'],
+      'ShieldBlock': ['SheRa', 'Adora'],
+      'Transform': ['SheRa', 'Adora'],
+      'PowerGlow': ['SheRa', 'Adora'],
     };
 
     for (const entry of entries) {

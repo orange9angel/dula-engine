@@ -502,7 +502,7 @@ def mix_audio(manifest, bgm_path=None, sfx_events=None):
         for idx in range(sfx_start, total_streams):
             amix_inputs += f"[sfx{idx}]"
 
-    amix = f"{amix_inputs}amix=inputs={total_streams}:duration=longest[outa]"
+    amix = f"{amix_inputs}amix=inputs={total_streams}:duration=longest:normalize=0[outa]"
     filter_complex = ";".join(filters + [amix])
 
     mixed_path = os.path.join(OUTPUT_DIR, "mixed.wav")

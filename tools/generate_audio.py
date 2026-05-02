@@ -727,10 +727,11 @@ def mix_audio(manifest, bgm_path=None, sfx_events=None):
             file_path = os.path.join(OUTPUT_DIR, entry["file"])
             inputs.append(f'-i "{file_path}"')
             delay_ms = int(round(entry["startTime"] * 1000))
-            filters.append(f"[{i}:a]adelay={delay_ms}|{delay_ms}[d{i}]")
+            filters.append(f"[{i}:a]atrim=start=0.2,adelay={delay_ms}|{delay_ms}[d{i}]")
 
         amix_inputs = "".join(f"[d{i}]" for i in range(len(entries)))
-        amix = f"{amix_inputs}amix=inputs={len(entries)}:duration=longest[dialogue]"
+        n_entries = len(entries)
+        amix = f"{amix_inputs}amix=inputs={n_entries}:duration=longest:normalize=0[dialogue]"
         filter_complex = ";".join(filters + [amix])
 
         cmd = f'ffmpeg -y {" ".join(inputs)} -filter_complex "{filter_complex}" -map "[dialogue]" -acodec pcm_s16le -ar 48000 "{dialogue_path}"'
@@ -842,6 +843,19 @@ async def generate(force_tts=False):
             print(f"Warning: no voice resolved for {char} (emotion={emotion}), skipping.")
             continue
 
+        # Edge-tts requires a voice parameter; fallback if only model is set
+        voice = params.get("voice")
+        if not voice:
+            # Map common DashScope models to edge-tts voices
+            model = params.get("model", "")
+            if "zhimao" in model:
+                voice = "zh-CN-YunxiNeural"
+            elif "zhishuo" in model:
+                voice = "zh-CN-YunxiaNeural"
+            else:
+                voice = "zh-CN-XiaoxiaoNeural"
+            print(f"  Info: using edge-tts fallback voice {voice} for {char} (model={model})")
+
         filename = f"{entry['index']:03d}_{char}.mp3"
         filepath = os.path.join(OUTPUT_DIR, filename)
 
@@ -855,7 +869,7 @@ async def generate(force_tts=False):
                 emotion_label = f" [{emotion}:{source}]"
             communicate = edge_tts.Communicate(
                 text=dialogue,
-                voice=params["voice"],
+                voice=voice,
                 rate=params.get("rate", "+0%"),
                 pitch=params.get("pitch", "+0Hz"),
                 volume=params.get("volume", "+0%"),

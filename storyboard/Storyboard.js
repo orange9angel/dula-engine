@@ -113,6 +113,7 @@ export class Storyboard {
             z: pos.options.z,
             face: pos.options.face,
             scene: sceneCursor,
+            startTime: entry.startTime,
           });
         }
       }
@@ -236,6 +237,15 @@ export class Storyboard {
         char.mesh.rotation.y = Math.atan2(dx, dz);
       } else if (p.face === 'forward') {
         char.mesh.lookAt(char.mesh.position.x, char.mesh.position.y, char.mesh.position.z + 5);
+      } else if (p.face === 'right') {
+        // Face +X direction
+        char.mesh.rotation.y = Math.PI / 2;
+      } else if (p.face === 'left') {
+        // Face -X direction
+        char.mesh.rotation.y = -Math.PI / 2;
+      } else if (p.face === 'back') {
+        // Face -Z direction
+        char.mesh.rotation.y = Math.PI;
       } else {
         const targetChar = this.characters.get(p.face);
         if (targetChar) {
@@ -415,7 +425,7 @@ export class Storyboard {
     }
   }
 
-  switchScene(sceneName, skipArrange = false) {
+  switchScene(sceneName, skipArrange = false, currentTime = null) {
     if (this.currentSceneName === sceneName) return;
     const SceneClass = SceneRegistry[sceneName];
     if (!SceneClass) {
@@ -451,16 +461,13 @@ export class Storyboard {
     // Generic placements from story (x/y/z, no court spot) — apply BEFORE arrangeCharacters
     // so arrangeCharacters only fills in missing positions
     // Only apply placements belonging to the current scene
-    const scenePlacements = this.storyPlacements?.filter(p => p.scene === sceneName) || [];
-    console.log('[switchScene]', sceneName, 'placements:', scenePlacements.map(p => ({c: p.character, x: p.x, z: p.z})));
+    const scenePlacements = this.storyPlacements?.filter(p => p.scene === sceneName && (currentTime === null || p.startTime === undefined || p.startTime <= currentTime)) || [];
     // First pass: set all positions
     for (const p of scenePlacements) {
       const char = this.characters.get(p.character);
-      console.log('[switchScene] applying', p.character, 'char=', !!char, 'x=', p.x, 'z=', p.z);
       if (!char) continue;
       if (p.x !== undefined && p.z !== undefined) {
         char.setPosition(p.x, p.y !== undefined ? p.y : 0, p.z);
-        console.log('[switchScene] setPosition', p.character, 'to', p.x, p.y !== undefined ? p.y : 0, p.z, 'actual=', char.mesh.position.x, char.mesh.position.y, char.mesh.position.z);
       }
     }
     // Second pass: apply faces (after all positions are set)
@@ -810,7 +817,7 @@ export class Storyboard {
       }
     }
     if (targetScene && targetScene !== this.currentSceneName) {
-      this.switchScene(targetScene, true);
+      this.switchScene(targetScene, true, t);
     }
 
     // Transition effects
@@ -830,7 +837,7 @@ export class Storyboard {
 
         if (isSpeakingWindow && isCurrentScene && !isInScene) {
           // Character enters scene just before speaking
-          console.log('[update] adding', entry.character, 'to', this.currentSceneName, 't=', t.toFixed(2), 'for speaking');
+          // console.log('[update] adding', entry.character, 'to', this.currentSceneName, 't=', t.toFixed(2), 'for speaking');
           this.currentScene.addCharacter(char);
           // Teleport to a reasonable position if no prior position set
           if (char.mesh.position.x === 0 && char.mesh.position.z === 0) {
@@ -1075,7 +1082,30 @@ export class Storyboard {
             }
             // OpenDrawer: animate drawer sliding open (DrawerScene)
             if (ev.name === 'OpenDrawer' && this.currentScene.openDrawer) {
-              this.currentScene.openDrawer();
+              this.currentScene.openDrawer(entry.startTime);
+            }
+            // Generic scene event: if the scene has a method matching the event name, call it
+            const sceneMethod = ev.name.charAt(0).toLowerCase() + ev.name.slice(1);
+            if (typeof this.currentScene[sceneMethod] === 'function') {
+              this.currentScene[sceneMethod]();
+            }
+            // Also try exact match (for methods like summonCourierShip)
+            if (typeof this.currentScene[ev.name] === 'function') {
+              this.currentScene[ev.name]();
+            }
+            // Hide character
+            if (ev.name === 'Hide') {
+              const char = this.characters.get(ev.options.character);
+              if (char && char.mesh) {
+                char.mesh.visible = false;
+              }
+            }
+            // Show character
+            if (ev.name === 'Show') {
+              const char = this.characters.get(ev.options.character);
+              if (char && char.mesh) {
+                char.mesh.visible = true;
+              }
             }
           }
         }

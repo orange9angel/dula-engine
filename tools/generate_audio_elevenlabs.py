@@ -721,7 +721,7 @@ def mix_audio(manifest, bgm_path=None, sfx_events=None):
             filters.append(f"[{i}:a]adelay={delay_ms}|{delay_ms}[d{i}]")
 
         amix_inputs = "".join(f"[d{i}]" for i in range(len(entries)))
-        amix = f"{amix_inputs}amix=inputs={len(entries)}:duration=longest[dialogue]"
+        amix = f"{amix_inputs}amix=inputs={len(entries)}:duration=longest:normalize=0[dialogue]"
         filter_complex = ";".join(filters + [amix])
 
         cmd = f'ffmpeg -y {" ".join(inputs)} -filter_complex "{filter_complex}" -map "[dialogue]" -acodec pcm_s16le -ar 48000 "{dialogue_path}"'

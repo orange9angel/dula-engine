@@ -55,7 +55,7 @@ export class CharacterInspector extends InspectorBase {
     }
 
     // Check character registry
-    const knownChars = ['Doraemon', 'Nobita', 'Shizuka', 'Xiaoyue', 'Xingzai', 'RockLee'];
+    const knownChars = ['Doraemon', 'Nobita', 'Shizuka', 'Xiaoyue', 'Xingzai', 'RockLee', 'SheRa', 'Adora', 'Catra', 'Hordak'];
     for (const charName of characters) {
       const isRegistered = registeredChars.has(charName) || knownChars.includes(charName);
       if (!isRegistered && registeredChars.size > 0) {
@@ -162,9 +162,10 @@ export class CharacterInspector extends InspectorBase {
           // Check if there's any entrance animation or transition for this character
           const hasTransition = curr.firstEntry?.transition || curr.firstEntry?.rawText?.includes('Transition:');
           const hasMoveEvent = this._hasMoveEventForChar(entries, char, curr.startTime);
+          const hasSceneTransition = this._hasSceneTransitionTag(storyText, curr.scene);
           const isFirstScene = i === 0;
 
-          if (!isFirstScene && !hasTransition && !hasMoveEvent) {
+          if (!isFirstScene && !hasTransition && !hasMoveEvent && !hasSceneTransition) {
             this.addIssue('error', `角色 ${char} 在场景 ${curr.scene} 中凭空出现（前一场景 ${prev.scene} 未出现），缺少入场动画或过渡`, curr.startTime, `添加 {Event:Move|character=${char}|...} 入场动画，或确保场景切换有过渡效果`, 'BUG-CHAR-APPEAR');
           }
         }
@@ -211,5 +212,23 @@ export class CharacterInspector extends InspectorBase {
       }
     }
     return -1;
+  }
+
+  /**
+   * 检查场景切换前是否有 Transition 标签
+   */
+  _hasSceneTransitionTag(storyText, sceneName) {
+    const lines = storyText.split('\n');
+    for (let i = 0; i < lines.length; i++) {
+      if (lines[i].includes(`@${sceneName}`)) {
+        // 检查场景声明行及上下几行是否有 Transition
+        for (let j = Math.max(0, i - 5); j < Math.min(i + 3, lines.length); j++) {
+          if (/\{Transition:[^}]+\}/.test(lines[j])) {
+            return true;
+          }
+        }
+      }
+    }
+    return false;
   }
 }
