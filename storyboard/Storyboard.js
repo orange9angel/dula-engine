@@ -443,6 +443,16 @@ export class Storyboard {
       const scenes = this.characterScenes.get(name);
       if (scenes && scenes.has(sceneName)) {
         newScene.addCharacter(char);
+        // Clear pending moves from previous scenes so they don't override placement
+        if (char.moves) {
+          char.moves = [];
+        }
+        // Reset rotation to upright when entering a new scene
+        // (prevents flipped characters from previous scene animations/moves)
+        if (char.mesh) {
+          char.mesh.rotation.x = 0;
+          char.mesh.rotation.z = 0;
+        }
       }
     }
 
@@ -1113,15 +1123,14 @@ export class Storyboard {
       // console.log('[update t=' + t.toFixed(2) + '] BEFORE currentScene.update, chars count=', this.currentScene.characters.length);
       this.currentScene.update(t, 0.016);
       // console.log('[update t=' + t.toFixed(2) + '] AFTER currentScene.update, chars count=', this.currentScene.characters.length, 'scene=', this.currentScene.name);
-      // DEBUG: log character positions
-      // DEBUG: BeachScene character positions
-      // if (this.currentSceneName === 'BeachScene') {
+      // DEBUG: log character positions (uncomment when needed)
+      // if (this.currentSceneName === 'WhisperingWoodsScene' && t >= 101 && t <= 103) {
       //   const chars = this.currentScene.characters;
       //   console.log('[update t=' + t.toFixed(2) + '] chars in ' + this.currentSceneName + ' count=' + chars.length);
       //   for (let i = 0; i < chars.length; i++) {
       //     const c = chars[i];
       //     if (c) {
-      //       console.log('  [' + i + '] name=' + c.name + ' pos=' + c.mesh.position.x.toFixed(2) + ',' + c.mesh.position.y.toFixed(2) + ',' + c.mesh.position.z.toFixed(2));
+      //       console.log('  [' + i + '] name=' + c.name + ' pos=' + c.mesh.position.x.toFixed(2) + ',' + c.mesh.position.y.toFixed(2) + ',' + c.mesh.position.z.toFixed(2) + ' visible=' + c.mesh.visible + ' rot=' + c.mesh.rotation.x.toFixed(2) + ',' + c.mesh.rotation.y.toFixed(2) + ',' + c.mesh.rotation.z.toFixed(2));
       //     } else {
       //       console.log('  [' + i + '] UNDEFINED');
       //     }

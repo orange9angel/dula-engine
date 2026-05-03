@@ -186,6 +186,9 @@ export class CharacterBase {
           this.mesh.position.y = move.targetPos.y;
           this.baseY = move.targetPos.y;
         }
+        // Reset pitch rotation after movement (keep only yaw from facing direction)
+        this.mesh.rotation.x = 0;
+        this.mesh.rotation.z = 0;
         move.completed = true;
       }
     }
@@ -196,6 +199,14 @@ export class CharacterBase {
         this.mesh.position.x = tp.pos.x;
         this.mesh.position.z = tp.pos.z;
       }
+    }
+
+    // Ensure character mesh stays upright (prevent lookAt from flipping)
+    if (this.mesh && Math.abs(this.mesh.rotation.x) > 0.01) {
+      this.mesh.rotation.x = 0;
+    }
+    if (this.mesh && Math.abs(this.mesh.rotation.z) > 0.01) {
+      this.mesh.rotation.z = 0;
     }
   }
 
