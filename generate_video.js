@@ -76,14 +76,24 @@ const server = http.createServer((req, res) => {
     return;
   }
 
-  // Serve node_modules from episode directory or story root
+  // Serve node_modules from episode directory, story root, or project root
   if (reqPath.startsWith('/node_modules/')) {
     const relPath = reqPath.slice('/node_modules/'.length);
-    let filePath = path.join(EPISODE_DIR, 'node_modules', relPath);
-    if (!fs.existsSync(filePath)) {
-      filePath = path.join(process.cwd(), 'node_modules', relPath);
+    // Try multiple locations: episode dir -> story root -> dula-story -> project root
+    const candidates = [
+      path.join(EPISODE_DIR, 'node_modules', relPath),
+      path.join(process.cwd(), 'node_modules', relPath),
+      path.join(__dirname, '..', 'dula-story', 'node_modules', relPath),
+      path.join(__dirname, '..', 'node_modules', relPath),
+    ];
+    for (const candidate of candidates) {
+      if (fs.existsSync(candidate)) {
+        serveFile(candidate, res, req.url);
+        return;
+      }
     }
-    serveFile(filePath, res, req.url);
+    // Fallback to first candidate for proper 404 logging
+    serveFile(candidates[0], res, req.url);
     return;
   }
 
@@ -146,10 +156,8 @@ async function combineVideo(totalFrames) {
 }
 
 function cleanup() {
-  if (fs.existsSync(FRAMES_DIR)) {
-    fs.rmSync(FRAMES_DIR, { recursive: true });
-    console.log('Cleaned up frames directory.');
-  }
+  // DEBUG: keep frames for inspection
+  console.log('DEBUG: Skipping cleanup to preserve frames.');
 }
 
 server.listen(PORT, async () => {

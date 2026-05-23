@@ -263,6 +263,7 @@ function parseStory(text) {
         .replace(/\{SFX:[^}]+\}\s*/g, '')
         .replace(/\{Transition:[^}]+\}\s*/g, '')
         .replace(/\{Event:[^}]+\}\s*/g, '')
+        .replace(/\{Voice:[^}]+\}\s*/g, '')
         .replace(/\{Music:[^}]+\}\s*/g, '')
         .trim();
 

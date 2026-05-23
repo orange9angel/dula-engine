@@ -16,6 +16,9 @@ const camera = new THREE.PerspectiveCamera(45, width / height, 0.1, 1000);
 camera.position.set(0, 3, 10);
 camera.lookAt(0, 1.5, 0);
 
+// Setup retro TV post-processing if episode provides it
+let retroEffect = null;
+
 const storyboard = new Storyboard(renderer, camera);
 
 // Patch fetch for correct asset paths from /tools/ base URL
@@ -39,11 +42,22 @@ async function init() {
 }
 
 window.renderShot = async (startTime, endTime, shotFps) => {
+  // Initialize post-processing after bootstrap is loaded
+  if (!retroEffect && window.setupRetroPostProcess) {
+    retroEffect = window.setupRetroPostProcess(renderer);
+  }
+  if (retroEffect) {
+    storyboard.outlineEffect = retroEffect;
+  }
+
   const totalFrames = Math.ceil((endTime - startTime) * shotFps);
   for (let i = 0; i < totalFrames; i++) {
     const t = startTime + i / shotFps;
     storyboard.update(t);
     storyboard.render();
+    if (retroEffect) {
+      retroEffect.update(1 / shotFps);
+    }
     const dataUrl = renderer.domElement.toDataURL('image/png');
     const base64 = dataUrl.split(',')[1];
     await window.saveShotFrame(i + 1, base64);

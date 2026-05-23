@@ -9,7 +9,8 @@
     "dula-verify": "./bin/dula-verify.js",
     "dula-audio": "./bin/dula-audio.js",
     "dula-inspect": "./tools/inspect.js",
-    "dula-inspect-team": "./bin/dula-inspect-team.js"
+    "dula-inspect-team": "./bin/dula-inspect-team.js",
+    "dula-preview": "./bin/dula-preview.js"
   },
   "files": [
     "bin/",

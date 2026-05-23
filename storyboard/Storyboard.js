@@ -929,7 +929,7 @@ export class Storyboard {
       // console.log('[update t=' + t.toFixed(2) + '] chars in', this.currentSceneName, ':', this.currentScene.characters.map(c => c.constructor.name).join(','));
     }
 
-    // Character speaking states
+    // Character speaking states - only speak if there's actual audio/subtitle
     for (const char of this.characters.values()) {
       char.stopSpeaking();
     }
@@ -939,8 +939,11 @@ export class Storyboard {
         if (char) {
           const slotDuration = entry.endTime - entry.startTime;
           const audioDur = this.audioDurations.get(entry.index);
-          const speakDuration = audioDur ? Math.min(audioDur + 0.15, slotDuration) : slotDuration;
-          char.speak(entry.startTime, speakDuration);
+          // Only speak if there's actual audio duration (real voice/subtitle)
+          if (audioDur && audioDur > 0) {
+            const speakDuration = Math.min(audioDur + 0.15, slotDuration);
+            char.speak(entry.startTime, speakDuration);
+          }
         }
       }
     }
@@ -1094,6 +1097,11 @@ export class Storyboard {
             if (ev.name === 'OpenDrawer' && this.currentScene.openDrawer) {
               this.currentScene.openDrawer(entry.startTime);
             }
+            // ExtinguishZodiacFlame: extinguish a zodiac flame by index
+            if (ev.name === 'ExtinguishZodiacFlame' && this.currentScene.extinguishZodiacFlame) {
+              const idx = ev.options.index !== undefined ? parseInt(ev.options.index) : 0;
+              this.currentScene.extinguishZodiacFlame(idx);
+            }
             // Generic scene event: if the scene has a method matching the event name, call it
             const sceneMethod = ev.name.charAt(0).toLowerCase() + ev.name.slice(1);
             if (typeof this.currentScene[sceneMethod] === 'function') {
@@ -1115,6 +1123,37 @@ export class Storyboard {
               const char = this.characters.get(ev.options.character);
               if (char && char.mesh) {
                 char.mesh.visible = true;
+              }
+            }
+            // ShowAura: activate aura rings on a character
+            if (ev.name === 'ShowAura') {
+              const char = this.characters.get(ev.options.character);
+              if (char && char.showAura) {
+                char.showAura();
+              }
+            }
+            // HideAura: deactivate aura rings on a character
+            if (ev.name === 'HideAura') {
+              const char = this.characters.get(ev.options.character);
+              if (char && char.hideAura) {
+                char.hideAura();
+              }
+            }
+            // ShowBeam: activate beam from one character to another
+            if (ev.name === 'ShowBeam') {
+              const fromChar = this.characters.get(ev.options.from);
+              const toChar = this.characters.get(ev.options.to);
+              if (fromChar && toChar && fromChar.setBeamTarget) {
+                const targetPos = new THREE.Vector3();
+                toChar.mesh.getWorldPosition(targetPos);
+                fromChar.setBeamTarget(targetPos);
+              }
+            }
+            // HideBeam: deactivate beam
+            if (ev.name === 'HideBeam') {
+              const char = this.characters.get(ev.options.character);
+              if (char && char.hideBeam) {
+                char.hideBeam();
               }
             }
           }

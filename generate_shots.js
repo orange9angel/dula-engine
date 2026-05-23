@@ -48,11 +48,21 @@ const server = http.createServer((req, res) => {
     return;
   }
 
-  // Serve node_modules from story root (current working directory)
+  // Serve node_modules from story root or project root
   if (reqPath.startsWith('/node_modules/')) {
-    const storyRoot = process.cwd();
-    const filePath = path.join(storyRoot, reqPath);
-    serveFile(filePath, res);
+    const relPath = reqPath.slice('/node_modules/'.length);
+    const candidates = [
+      path.join(process.cwd(), 'node_modules', relPath),
+      path.join(__dirname, '..', 'dula-story', 'node_modules', relPath),
+      path.join(__dirname, '..', 'node_modules', relPath),
+    ];
+    for (const candidate of candidates) {
+      if (fs.existsSync(candidate)) {
+        serveFile(candidate, res);
+        return;
+      }
+    }
+    serveFile(candidates[0], res);
     return;
   }
 

@@ -574,9 +574,14 @@ def check_bgm_files(cues):
     music_dir = os.path.join(OUTPUT_DIR, "music")
     missing = []
     for cue in cues:
-        file_path = os.path.join(music_dir, f"{cue['name']}.wav")
-        if not os.path.exists(file_path):
-            missing.append(cue['name'])
+        if "file" in cue:
+            # Direct file path from voice_config
+            if not os.path.exists(cue["file"]):
+                missing.append(cue["file"])
+        else:
+            file_path = os.path.join(music_dir, f"{cue['name']}.wav")
+            if not os.path.exists(file_path):
+                missing.append(cue['name'])
     if missing:
         print(f"\n[WARNING] Missing BGM files: {missing}")
         print("Please download high-quality music tracks and place them in:")
@@ -620,7 +625,10 @@ def mix_bgm_track(cues, entries, duration, sample_rate=48000):
         duck_events = merged
 
     for cue in cues:
-        file_path = os.path.join(EPISODE, "assets", "audio", "music", f"{cue['name']}.wav")
+        if "file" in cue:
+            file_path = cue["file"]
+        else:
+            file_path = os.path.join(EPISODE, "assets", "audio", "music", f"{cue['name']}.wav")
         if not os.path.exists(file_path):
             print(f"Warning: BGM file not found: {file_path}")
             continue
@@ -750,7 +758,8 @@ def mix_audio(manifest, bgm_path=None, sfx_events=None):
             inputs.append(f'-i "{sfx["file"]}"')
             delay_ms = int(round(sfx["startTime"] * 1000))
             # Pre-scale each SFX to compensate for amix normalize
-            filters.append(f"[{i}:a]adelay={delay_ms}|{delay_ms},volume={n_sfx}[s{i}]")
+            vol = sfx.get("volume", 1.0)
+            filters.append(f"[{i}:a]adelay={delay_ms}|{delay_ms},volume={vol}[s{i}]")
 
         amix_inputs = "".join(f"[s{i}]" for i in range(n_sfx))
         amix = f"{amix_inputs}amix=inputs={n_sfx}:duration=longest:normalize=0[sfxout]"
@@ -767,19 +776,37 @@ def mix_audio(manifest, bgm_path=None, sfx_events=None):
     final_filters = []
     stream_idx = 0
 
+    # Load optional audio mix config
+    audio_mix_path = os.path.join(EPISODE, "config", "audio_mix.json")
+    mix_cfg = {}
+    if os.path.exists(audio_mix_path):
+        with open(audio_mix_path, "r", encoding="utf-8") as f:
+            mix_cfg = json.load(f)
+
+    dialogue_vol = mix_cfg.get("dialogueVolume", 2.5)
+    bgm_vol = mix_cfg.get("bgmVolume", 1.0)
+    sfx_vol = mix_cfg.get("sfxVolume", 1.0)
+    use_ducking = mix_cfg.get("useDucking", False)
+    duck_depth = mix_cfg.get("duckDepth", 0.3)
+
     if dialogue_path:
         final_inputs.append(f'-i "{dialogue_path}"')
-        final_filters.append(f"[{stream_idx}:a]volume=2.5[dialogue{stream_idx}]")
+        final_filters.append(f"[{stream_idx}:a]volume={dialogue_vol}[dialogue{stream_idx}]")
         stream_idx += 1
 
     if bgm_path:
         final_inputs.append(f'-i "{bgm_path}"')
-        final_filters.append(f"[{stream_idx}:a]volume=1.0[bgm{stream_idx}]")
+        if use_ducking and dialogue_path:
+            # Sidechain ducking: BGM is reduced when dialogue is present
+            # sidechaincompress needs 2 inputs: [main][sidechain]
+            final_filters.append(f"[{stream_idx}:a][0:a]sidechaincompress=threshold=0.02:ratio=4:attack=50:release=300:level_in=1.0:mix={duck_depth}[bgm{stream_idx}]")
+        else:
+            final_filters.append(f"[{stream_idx}:a]volume={bgm_vol}[bgm{stream_idx}]")
         stream_idx += 1
 
     if sfx_path:
         final_inputs.append(f'-i "{sfx_path}"')
-        final_filters.append(f"[{stream_idx}:a]volume=1.0[sfx{stream_idx}]")
+        final_filters.append(f"[{stream_idx}:a]volume={sfx_vol}[sfx{stream_idx}]")
         stream_idx += 1
 
     if stream_idx == 0:
@@ -818,6 +845,10 @@ async def generate(force_tts=False):
         "entries": [],
     }
 
+    # Collect SFX and BGM events from voice_config and story tags
+    sfx_events = []
+    bgm_cues = []
+
     for entry in entries:
         char = entry["character"]
         dialogue = entry["dialogue"]
@@ -835,6 +866,41 @@ async def generate(force_tts=False):
         cfg = voice_config.get(char)
         if not cfg:
             print(f"Warning: no voice config for {char}, skipping.")
+            continue
+
+        # Handle SFX type config (pre-recorded sound effects like roars)
+        if cfg.get("type") == "sfx":
+            sfx_file = cfg.get("file")
+            if sfx_file:
+                full_path = os.path.join(EPISODE, sfx_file)
+                if os.path.exists(full_path):
+                    sfx_events.append({
+                        "file": full_path,
+                        "startTime": entry["startTime"],
+                        "volume": cfg.get("volume", 1.0),
+                    })
+                    print(f"Scheduled SFX: {char} @ {entry['startTime']:.2f}s -> {sfx_file}")
+                else:
+                    print(f"Warning: SFX file not found: {full_path}")
+            continue
+
+        # Handle BGM type config
+        if cfg.get("type") == "bgm":
+            bgm_file = cfg.get("file")
+            if bgm_file:
+                full_path = os.path.join(EPISODE, bgm_file)
+                if os.path.exists(full_path):
+                    bgm_cues.append({
+                        "name": char,
+                        "file": full_path,
+                        "startTime": entry["startTime"],
+                        "endTime": entry["endTime"],
+                        "volume": cfg.get("volume", 0.6),
+                        "loop": cfg.get("loop", True),
+                    })
+                    print(f"Scheduled BGM: {char} @ {entry['startTime']:.2f}s -> {bgm_file}")
+                else:
+                    print(f"Warning: BGM file not found: {full_path}")
             continue
 
         # Resolve emotion-aware parameters
@@ -928,39 +994,53 @@ async def generate(force_tts=False):
 
     # Check BGM files and mix if available
     bgm_path = None
-    if music_cues:
+    all_bgm_cues = music_cues + bgm_cues
+    if all_bgm_cues:
         max_time = max(e["endTime"] for e in entries) if entries else 70.0
         cues = []
-        for cue in music_cues:
-            opts = cue["options"]
-            cues.append({
-                "name": opts.get("name", "theme"),
-                "startTime": cue["startTime"],
-                "endTime": opts.get("endTime", max_time),
-                "fadeIn": opts.get("fadeIn", 1.0),
-                "fadeOut": opts.get("fadeOut", 1.0),
-                "baseVolume": opts.get("baseVolume", 0.5),
-            })
+        for cue in all_bgm_cues:
+            if isinstance(cue, dict) and "file" in cue:
+                # From voice_config BGM type
+                cues.append({
+                    "name": cue["name"],
+                    "file": cue["file"],
+                    "startTime": cue["startTime"],
+                    "endTime": cue.get("endTime", max_time),
+                    "fadeIn": cue.get("fadeIn", 2.0),
+                    "fadeOut": cue.get("fadeOut", 2.0),
+                    "baseVolume": cue.get("volume", 0.6),
+                })
+            else:
+                # From story Music tags
+                opts = cue["options"]
+                cues.append({
+                    "name": opts.get("name", "theme"),
+                    "startTime": cue["startTime"],
+                    "endTime": opts.get("endTime", max_time),
+                    "fadeIn": opts.get("fadeIn", 1.0),
+                    "fadeOut": opts.get("fadeOut", 1.0),
+                    "baseVolume": opts.get("baseVolume", 0.5),
+                })
         if check_bgm_files(cues):
             bgm_path = mix_bgm_track(cues, entries, max_time + 1.0)
         else:
             print("Skipping BGM mix — files missing.")
 
-    # Build SFX event list: manual scheduled + procedural fallback
-    sfx_events = []
+    # Build SFX event list: manual scheduled + procedural fallback + voice_config SFX
+    all_sfx_events = list(sfx_events)
 
     # Add auto-scheduled manual SFX
     if scheduled_sfx:
-        sfx_events.extend(scheduled_sfx)
+        all_sfx_events.extend(scheduled_sfx)
 
     # Add procedural tennis hit (only if tennis-related choreography exists)
     if tennis_hit_times:
         tennis_hit_path = os.path.join(SFX_DIR, "tennis_hit.wav")
         generate_tennis_hit_sfx(tennis_hit_path)
         for t in tennis_hit_times:
-            sfx_events.append({"file": tennis_hit_path, "startTime": t})
+            all_sfx_events.append({"file": tennis_hit_path, "startTime": t})
 
-    mix_audio(manifest, bgm_path, sfx_events if sfx_events else None)
+    mix_audio(manifest, bgm_path, all_sfx_events if all_sfx_events else None)
 
 
 if __name__ == "__main__":

@@ -29,7 +29,13 @@ try {
   console.warn('No bootstrap.js found, running with empty registries:', e.message);
 }
 
-const storyboard = new Storyboard(renderer, camera, null, null);
+// Setup retro TV post-processing if episode provides it
+let retroEffect = null;
+if (window.setupRetroPostProcess) {
+  retroEffect = window.setupRetroPostProcess(renderer);
+}
+
+const storyboard = new Storyboard(renderer, camera, null, retroEffect);
 const fadeDiv = document.getElementById('fade');
 
 async function renderFrames() {
@@ -85,6 +91,11 @@ async function renderFrames() {
     }
 
     storyboard.render();
+
+    // Update post-processing time
+    if (retroEffect) {
+      retroEffect.update(1 / fps);
+    }
 
     // Apply fade overlay
     if (fadeRemaining > 0) {

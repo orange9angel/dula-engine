@@ -55,7 +55,7 @@ export class CharacterInspector extends InspectorBase {
     }
 
     // Check character registry
-    const knownChars = ['Doraemon', 'Nobita', 'Shizuka', 'Xiaoyue', 'Xingzai', 'RockLee', 'SheRa', 'Adora', 'Catra', 'Hordak'];
+    const knownChars = ['Doraemon', 'Nobita', 'Shizuka', 'Xiaoyue', 'Xingzai', 'RockLee', 'SheRa', 'Adora', 'Catra', 'Hordak', 'Kagome'];
     for (const charName of characters) {
       const isRegistered = registeredChars.has(charName) || knownChars.includes(charName);
       if (!isRegistered && registeredChars.size > 0) {

@@ -48,7 +48,7 @@ export function runPreflight(context) {
   const charMatches = storyText.matchAll(/^\[([A-Z][a-zA-Z0-9_]*)\]/gm);
   for (const m of charMatches) characters.add(m[1]);
 
-  const knownChars = ['Doraemon', 'Nobita', 'Shizuka', 'Xiaoyue', 'Xingzai', 'RockLee', 'SheRa', 'Adora', 'Catra', 'Hordak'];
+  const knownChars = ['Doraemon', 'Nobita', 'Shizuka', 'Xiaoyue', 'Xingzai', 'RockLee', 'SheRa', 'Adora', 'Catra', 'Hordak', 'Kagome'];
   const customCharsDir = path.join(episodeDir, 'characters');
 
   for (const char of characters) {

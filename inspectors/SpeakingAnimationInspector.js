@@ -67,6 +67,10 @@ export class SpeakingAnimationInspector extends InspectorBase {
         continue;
       }
 
+      if (info.hasCustomAnimateMouth) {
+        continue;
+      }
+
       // 检查几何体类型是否被支持
       const supportedGeos = ['ConeGeometry', 'SphereGeometry', 'TubeGeometry'];
       if (!supportedGeos.includes(info.geoType)) {
@@ -182,6 +186,7 @@ export class SpeakingAnimationInspector extends InspectorBase {
       geoType: 'Unknown',
       hasBaseScale: false,
       hasBaseRotation: false,
+      hasCustomAnimateMouth: false,
       baseScaleX: null,
       baseScaleY: null,
       baseScaleZ: null,
@@ -191,6 +196,10 @@ export class SpeakingAnimationInspector extends InspectorBase {
     };
 
     // 检查是否有 mouth 定义
+    info.hasCustomAnimateMouth = /animateMouth\s*\(/.test(content);
+
+    // Kagome and other richer characters may provide their own mouth animation.
+    // In that case the base CharacterBase geometry whitelist is not authoritative.
     const mouthMatch = content.match(/this\.mouth\s*=\s*(\w+)/);
     if (!mouthMatch) {
       // 也可能直接 new THREE.SomethingGeometry()
@@ -280,6 +289,7 @@ export class SpeakingAnimationInspector extends InspectorBase {
     const usedGeos = new Set();
     for (const info of charMouthInfo.values()) {
       if (info && info.hasMouth && info.geoType !== 'Unknown') {
+        if (info.hasCustomAnimateMouth) continue;
         usedGeos.add(info.geoType);
       }
     }
