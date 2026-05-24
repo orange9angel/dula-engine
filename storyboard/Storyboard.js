@@ -41,6 +41,9 @@ export class Storyboard {
     this.activeTransition = null;
     this.transitionScene = new THREE.Scene();
     this.hitstopManager = new HitstopManager();
+    this.combatDirector = null;
+    this.cinematicAdapter = null;
+    this.timeScaleEvents = []; // { startTime, endTime, scale }
   }
 
   async load(storyPath, manifestPath) {
@@ -478,6 +481,9 @@ export class Storyboard {
     if (this.currentSceneName === 'BasketballArenaScene') {
       this._setupDunkEvents();
     }
+
+    // CombatDirector: initialize and process combat tags
+    this._setupCombatDirector();
   }
 
   switchScene(sceneName, skipArrange = false, currentTime = null) {
@@ -562,7 +568,11 @@ export class Storyboard {
     }
 
     if (!skipArrange) {
-      this.arrangeCharacters();
+      // If CombatDirector has set up battle line, don't override with arrangeCharacters
+      const hasCombatSetup = Array.from(this.characters.values()).some(char => char.userData?.inCombat);
+      if (!hasCombatSetup) {
+        this.arrangeCharacters();
+      }
     }
 
     // Generic prop handling (all scenes)
@@ -790,6 +800,26 @@ export class Storyboard {
     const chars = Array.from(this.characters.values());
     // Only consider placements for the current scene
     const scenePlacements = this.storyPlacements?.filter(p => p.scene === this.currentSceneName) || [];
+
+    // Check if CombatDirector has set up a battle line for any of these characters
+    const hasCombatSetup = chars.some(char => char.userData?.inCombat);
+
+    if (hasCombatSetup) {
+      // CombatDirector already handled positioning and facing
+      // Only fill in missing positions for non-combat characters
+      for (const char of chars) {
+        if (char.userData?.inCombat) continue;
+        const p = scenePlacements.find(sp => sp.character === char.name);
+        if (!p || p.x === undefined) {
+          char.setPosition(0, 0, 0);
+        }
+        if (!p || !p.face) {
+          char.mesh.lookAt(0, 0, 5);
+        }
+      }
+      return;
+    }
+
     if (chars.length === 1) {
       // Only apply default position if not already set by storyPlacements
       if (!scenePlacements.find(p => p.character === chars[0].name && p.x !== undefined)) {
@@ -911,6 +941,11 @@ export class Storyboard {
     this._updateSFXVisuals(t);
 
     if (!isHitstop) {
+      // 在慢动作期间，传递 timeScale 给场景（动画系统内部基于时间戳，会自动减速）
+      if (this.currentScene && this.cinematicAdapter) {
+        this.currentScene.timeScale = this.cinematicAdapter.computeTimeScale(t);
+      }
+
       // Dynamic character add/remove based on speaking time
       // Characters are added to scene just before their first line and removed after their last line
       if (this.currentScene) {
@@ -1238,7 +1273,8 @@ export class Storyboard {
           }
         }
         // console.log('[update t=' + t.toFixed(2) + '] BEFORE currentScene.update, chars count=', this.currentScene.characters.length);
-        this.currentScene.update(t, 0.016);
+        const timeScale = this.cinematicAdapter ? this.cinematicAdapter.computeTimeScale(t) : 1.0;
+        this.currentScene.update(t, 0.016 * timeScale);
         // console.log('[update t=' + t.toFixed(2) + '] AFTER currentScene.update, chars count=', this.currentScene.characters.length, 'scene=', this.currentScene.name);
         // DEBUG: log character positions (uncomment when needed)
         // if (this.currentSceneName === 'WhisperingWoodsScene' && t >= 101 && t <= 103) {
@@ -1254,6 +1290,24 @@ export class Storyboard {
         //   }
         // }
       }
+    }
+
+    // 更新 timeScale：同步到 HitstopManager
+    const timeScale = this.cinematicAdapter ? this.cinematicAdapter.computeTimeScale(t) : 1.0;
+    this.hitstopManager.timeScale = timeScale;
+
+    // CinematicCombatAdapter: update staging, camera overrides, bullet time
+    if (this.cinematicAdapter) {
+      this.cinematicAdapter.update(t);
+    } else if (this.combatDirector) {
+      this.combatDirector.update(t);
+    }
+    
+    // ProjectileSystem: update all flying projectiles
+    if (this.combatDirector && this.combatDirector.projectileSystem) {
+      const scene = this.currentScene ? this.currentScene.scene : null;
+      const delta = 1 / 30; // approximate delta
+      this.combatDirector.projectileSystem.update(t, delta * timeScale, scene, this.characters);
     }
 
     // Camera shake from hitstop (applied even during freeze so the screen still shakes)
@@ -1467,6 +1521,187 @@ export class Storyboard {
       if (this.activeTransition) {
         this.activeTransition.end(this.renderer, this.camera, { transitionScene: this.transitionScene });
         this.activeTransition = null;
+      }
+    }
+  }
+
+  /**
+   * Initialize CombatDirector and process combat tags from .story entries.
+   */
+  _setupCombatDirector() {
+    const CombatDirectorClass = DirectorRegistry['CombatDirector'];
+    if (!CombatDirectorClass) return;
+
+    this.combatDirector = new CombatDirectorClass(this);
+
+    // 包装 CinematicCombatAdapter
+    const CinematicAdapterClass = DirectorRegistry['CinematicCombatAdapter'];
+    if (CinematicAdapterClass) {
+      this.cinematicAdapter = new CinematicAdapterClass(this.combatDirector);
+    }
+
+    // Parse combat tags from entries（支持同一条目多个 Combat 标签）
+    for (const entry of this.entries) {
+      const combatTags = entry.combatAll || (entry.combat ? [entry.combat] : []);
+      if (combatTags.length === 0) continue;
+
+      for (const combatTag of combatTags) {
+        const { name, options } = combatTag;
+        const startTime = entry.startTime;
+
+        switch (name) {
+          case 'Setup': {
+            const charA = options.charA;
+            const charB = options.charB;
+            if (charA && charB) {
+              this.combatDirector.setupBattleLine(
+                charA,
+                charB,
+                options.centerX ?? 0,
+                options.centerZ ?? 0,
+                options.distance ?? 4
+              );
+            }
+            break;
+          }
+          case 'Combo': {
+            const attacker = options.attacker;
+            const defender = options.defender;
+            const sequence = options.sequence;
+            if (attacker && defender && sequence) {
+              const noAutoCamera = options.noAutoCamera === true || options.noAutoCamera === 'true';
+              if (this.cinematicAdapter) {
+                this.cinematicAdapter.scheduleCombo(attacker, defender, sequence, startTime, { noAutoCamera });
+              } else {
+                this.combatDirector.scheduleCombo(attacker, defender, sequence, startTime);
+              }
+            }
+            break;
+          }
+          case 'Attack': {
+            const attacker = options.attacker;
+            const defender = options.defender;
+            const anim = options.anim;
+            if (attacker && defender && anim) {
+              const noAutoCamera = options.noAutoCamera === true || options.noAutoCamera === 'true';
+              if (this.cinematicAdapter) {
+                this.cinematicAdapter.scheduleAttack(attacker, defender, anim, startTime, {
+                  hitFrame: options.hitFrame,
+                  sfx: options.sfx,
+                  reaction: options.reaction,
+                  hitstop: options.hitstop,
+                  shake: options.shake,
+                  noStance: options.noStance,
+                  noAutoCamera,
+                });
+              } else {
+                this.combatDirector.scheduleAttack(attacker, defender, anim, startTime, {
+                  hitFrame: options.hitFrame,
+                  sfx: options.sfx,
+                  reaction: options.reaction,
+                  hitstop: options.hitstop,
+                  shake: options.shake,
+                  noStance: options.noStance,
+                });
+              }
+            }
+            break;
+          }
+          case 'Reaction': {
+            const characterName = options.character;
+            const anim = options.anim;
+            if (characterName && anim) {
+              if (this.cinematicAdapter) {
+                this.cinematicAdapter.scheduleReaction(characterName, anim, startTime);
+              } else {
+                this.combatDirector.scheduleReaction(characterName, anim, startTime);
+              }
+            }
+            break;
+          }
+          case 'BulletTime': {
+            // {Combat:BulletTime|start=0.5|duration=1.2|scale=0.2|easeIn=0.1|easeOut=0.1}
+            if (this.cinematicAdapter) {
+              const btStart = startTime + (options.start ?? 0);
+              this.cinematicAdapter.scheduleBulletTime(
+                btStart,
+                options.duration ?? 1.0,
+                options.scale ?? 0.3,
+                options.easeIn ?? 0.1,
+                options.easeOut ?? 0.1
+              );
+              // 同时注册到 Storyboard 的 timeScaleEvents，供 update 使用
+              this.timeScaleEvents.push({
+                startTime: btStart,
+                endTime: btStart + (options.duration ?? 1.0),
+                scale: options.scale ?? 0.3,
+                easeIn: options.easeIn ?? 0.1,
+                easeOut: options.easeOut ?? 0.1,
+              });
+            }
+            break;
+          }
+          case 'Staging': {
+            // {Combat:Staging|type=pincer|chars=Yusuke,Kuwabara|target=Yokai|duration=1.0}
+            if (this.cinematicAdapter) {
+              this.cinematicAdapter.scheduleStaging(
+                options.type ?? 'pincer',
+                options.chars || options.characters || '',
+                options.target,
+                startTime,
+                options.duration ?? 1.0,
+                options
+              );
+            }
+            break;
+          }
+          case 'AdHoc': {
+            // {Combat:AdHoc|name=myCombo|attacker=Yusuke|defender=Yokai|moves=DashForward,null,Punch,0.25}
+            if (this.cinematicAdapter && options.name && options.moves) {
+              this.cinematicAdapter.registerAdHocCombo(options.name, options.moves);
+              if (options.attacker && options.defender) {
+                this.cinematicAdapter.scheduleAdHocCombo(
+                  options.attacker,
+                  options.defender,
+                  options.name,
+                  startTime
+                );
+              }
+            }
+            break;
+          }
+          case 'Override': {
+            // {Combat:Override|camera=FightDramatic|lock=true|duration=3}
+            if (this.cinematicAdapter && options.camera) {
+              this.cinematicAdapter.scheduleCameraOverride(
+                startTime,
+                options.duration ?? 2.0,
+                options.camera,
+                options,
+                options.priority ?? 10
+              );
+            }
+            break;
+          }
+          case 'Emotion': {
+            // {Combat:Emotion|type=closeUp|character=Yusuke|hold=1.5}
+            if (this.cinematicAdapter && options.character) {
+              const camType = options.type === 'closeUp' ? 'FightEmotionCloseUp' :
+                              options.type === 'reveal' ? 'FightDramaticReveal' :
+                              options.type === 'overhead' ? 'FightOverhead' :
+                              options.type === 'bulletTrack' ? 'FightBulletTimeTrack' :
+                              'FightEmotionCloseUp';
+              this.cinematicAdapter.scheduleCameraOverride(
+                startTime,
+                options.hold ?? options.duration ?? 1.5,
+                camType,
+                { character: options.character, ...options },
+                options.priority ?? 15
+              );
+            }
+            break;
+          }
+        }
       }
     }
   }
