@@ -48,7 +48,9 @@ export class CharacterBase {
     // ── Animation blending system ──
     this._poseSnapshot = null;      // snapshot before animation starts
     this._lastAnimEndPose = null;   // pose at end of last animation
-    this._blendDuration = 0.15;     // seconds to blend between animations
+    this._blendDuration = 0.12;     // seconds to blend between animations
+    this._lastBodyAnimId = null;    // track which body animation is running
+    this._blendStartTime = 0;       // when current blend started
     this._idleAnim = null;          // current idle animation instance
     this._idleStartTime = 0;
     this.eyeTracking = {
@@ -180,52 +182,84 @@ export class CharacterBase {
     // Eye / head tracking
     this.updateEyeTracking(time);
 
-    // ── Animation blending system ──
-    // Find active animations and compute blend weights
-    const activeAnims = [];
+    // ── Animation blending system (v2) ──
+    // Categorize active animations by priority
+    const bodyAnims = [];
+    const faceAnims = [];
+    const fxAnims = [];
     for (const anim of this.animations) {
       if (time >= anim.startTime && time <= anim.endTime) {
         const progress = (time - anim.startTime) / (anim.endTime - anim.startTime);
-        activeAnims.push({ anim, progress, elapsed: time - anim.startTime });
+        const name = anim.instance.name;
+        const item = { anim, progress, elapsed: time - anim.startTime, name };
+        if (name.startsWith('FX')) {
+          fxAnims.push(item);
+        } else if (name.startsWith('Face')) {
+          faceAnims.push(item);
+        } else {
+          bodyAnims.push(item);
+        }
       }
     }
 
-    if (activeAnims.length > 0) {
-      // Sort by start time (most recent first)
-      activeAnims.sort((a, b) => b.anim.startTime - a.anim.startTime);
-      const primary = activeAnims[0];
+    // Sort each group by start time (most recent first)
+    bodyAnims.sort((a, b) => b.anim.startTime - a.anim.startTime);
+    faceAnims.sort((a, b) => b.anim.startTime - a.anim.startTime);
 
-      // Snapshot pose before first animation starts (once per animation sequence)
-      if (!this._poseSnapshot) {
-        this._poseSnapshot = this._snapshotPose();
+    const hasBody = bodyAnims.length > 0;
+    const hasFace = faceAnims.length > 0;
+    const hasFX = fxAnims.length > 0;
+
+    if (hasBody || hasFace || hasFX) {
+      // ── BODY ANIMATION ──
+      if (hasBody) {
+        const primary = bodyAnims[0];
+
+        // Detect animation change: if most recent anim is different from last frame
+        const currentAnimId = primary.anim.startTime;
+        if (this._lastBodyAnimId !== currentAnimId) {
+          // Animation changed! Snapshot current pose as blend source
+          this._poseSnapshot = this._snapshotPose();
+          this._blendStartTime = primary.anim.startTime;
+          this._lastBodyAnimId = currentAnimId;
+        }
+
+        // Compute blend factor
+        const blendElapsed = time - (this._blendStartTime || primary.anim.startTime);
+        const blendFactor = Math.min(1, blendElapsed / this._blendDuration);
+
+        // Save current mesh state
+        const preAnimPose = this._snapshotPose();
+
+        // Run the body animation (modifies mesh directly)
+        primary.anim.instance.update(primary.progress, this);
+
+        // Capture what the animation wants
+        const animPose = this._snapshotPose();
+
+        // Blend from snapshot to animation output
+        if (blendFactor < 1 && this._poseSnapshot) {
+          this._blendPoses(this._poseSnapshot, animPose, blendFactor);
+        }
+
+        // Store final pose for next frame's idle blend
+        this._lastAnimEndPose = this._snapshotPose();
       }
 
-      // Compute blend factor: 0 = fully from snapshot/last pose, 1 = fully current animation
-      const blendFactor = Math.min(1, primary.elapsed / this._blendDuration);
-
-      // Save current state before running animation
-      const beforePose = this._snapshotPose();
-
-      // Run the animation (this modifies the actual mesh)
-      primary.anim.instance.update(primary.progress, this);
-
-      // Capture the animation's desired output
-      const animPose = this._snapshotPose();
-
-      // If we're in the blend window, interpolate from the pre-animation state
-      if (blendFactor < 1 && this._poseSnapshot) {
-        this._blendPoses(this._poseSnapshot, animPose, blendFactor);
+      // ── FACIAL EXPRESSION ──
+      if (hasFace) {
+        const face = faceAnims[0];
+        face.anim.instance.update(face.progress, this);
       }
 
-      // Record end pose for next blend when animation ends
-      if (primary.progress >= 0.99) {
-        this._lastAnimEndPose = animPose;
-        this._poseSnapshot = null; // clear for next animation
+      // ── FX EFFECTS (all run in parallel) ──
+      for (const fx of fxAnims) {
+        fx.anim.instance.update(fx.progress, this);
       }
     } else {
-      // No active animation — clear snapshot and play idle
+      // No active animation — blend from last pose to idle
+      this._lastBodyAnimId = null;
       this._poseSnapshot = null;
-      this._lastAnimEndPose = null;
       this._updateIdle(time);
     }
 

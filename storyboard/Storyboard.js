@@ -285,6 +285,13 @@ export class Storyboard {
       'SwayBody', 'Walk', 'Run', 'Swim', 'Tremble', 'FlailArms',
       'FXEnergyAura', 'FightingStance',
     ]);
+    const ONE_SHOT_BODY_ANIMS = new Set([
+      'Punch', 'ComboPunch', 'Kick', 'SpinKick', 'Uppercut',
+      'SpiritSwordSwing', 'SpiritGunFire', 'SpiritGunCharge', 'SpiritSwordDraw',
+      'JumpAttack', 'DashForward', 'Dodge', 'Block', 'HitStagger',
+      'Knockdown', 'GetUp', 'PointForward', 'CrossArms', 'Nod',
+      'Shrug', 'LookAround', 'Celebrate', 'WaveHand', 'TurnToCamera',
+    ]);
     for (const entry of this.entries) {
       if (entry.character && entry.animations && entry.animations.length > 0) {
         const char = this.characters.get(entry.character);
@@ -296,13 +303,18 @@ export class Storyboard {
               const inst = new AnimClass();
               const isLooping = LOOPING_ANIMATIONS.has(animName);
               const isFX = animName.startsWith('FX');
-              // For looping animations or FX, stretch to fill the entry duration
-              // For one-shot body animations, also stretch if entry is longer
-              // (they will hold their final pose via the blend system)
-              if (isLooping || isFX || entryDuration > inst.duration) {
+              const isOneShotBody = ONE_SHOT_BODY_ANIMS.has(animName);
+              // CRITICAL FIX: One-shot body animations NEVER stretch.
+              // They play at natural speed, then hold final pose.
+              // Only looping anims and FX stretch to fill entry duration.
+              if (isLooping || isFX) {
                 char.playAnimation(AnimClass, entry.startTime, entryDuration);
-              } else {
+              } else if (isOneShotBody) {
+                // Natural duration, no stretch. Entry gap will be filled by idle/hold.
                 char.playAnimation(AnimClass, entry.startTime);
+              } else {
+                // Facial expressions and misc: stretch to entry duration
+                char.playAnimation(AnimClass, entry.startTime, entryDuration);
               }
             }
           }
@@ -870,13 +882,13 @@ export class Storyboard {
       if (entry._autoHitstop && t >= entry._autoHitstop.time && t < entry._autoHitstop.time + 0.05) {
         if (!entry._autoHitstopTriggered) {
           entry._autoHitstopTriggered = true;
-          this.hitstopManager.trigger(entry._autoHitstop.duration, entry._autoHitstop.shake, true);
+          this.hitstopManager.trigger(t, entry._autoHitstop.duration, entry._autoHitstop.shake, true);
         }
       }
       if (entry._explicitHitstop && t >= entry._explicitHitstop.time && t < entry._explicitHitstop.time + 0.05) {
         if (!entry._explicitHitstopTriggered) {
           entry._explicitHitstopTriggered = true;
-          this.hitstopManager.trigger(entry._explicitHitstop.duration, entry._explicitHitstop.shake, true);
+          this.hitstopManager.trigger(t, entry._explicitHitstop.duration, entry._explicitHitstop.shake, true);
         }
       }
     }
