@@ -8,6 +8,7 @@ import { CameraMoveRegistry } from '../camera/index.js';
 import { DirectorRegistry } from '../lib/DirectorRegistry.js';
 import { TransitionRegistry } from '../transitions/index.js';
 import { MusicDirector, MusicCue } from '../lib/MusicDirector.js';
+import { HitstopManager } from '../lib/HitstopManager.js';
 
 
 const DEFAULT_TRANSITIONS = {
@@ -39,6 +40,7 @@ export class Storyboard {
     this.choreography = null;
     this.activeTransition = null;
     this.transitionScene = new THREE.Scene();
+    this.hitstopManager = new HitstopManager();
   }
 
   async load(storyPath, manifestPath) {
@@ -279,22 +281,37 @@ export class Storyboard {
     }
 
     // Queue animations from SRT entries
+    const LOOPING_ANIMATIONS = new Set([
+      'SwayBody', 'Walk', 'Run', 'Swim', 'Tremble', 'FlailArms',
+      'FXEnergyAura', 'FightingStance',
+    ]);
     for (const entry of this.entries) {
       if (entry.character && entry.animations && entry.animations.length > 0) {
         const char = this.characters.get(entry.character);
         if (char) {
+          const entryDuration = entry.endTime - entry.startTime;
           for (const animName of entry.animations) {
             const AnimClass = AnimationRegistry[animName];
             if (AnimClass) {
-              // Use the animation's own duration so one-shot actions (like PullOutRacket)
-              // complete in their intended time rather than being stretched across the
-              // entire dialogue slot.
-              char.playAnimation(AnimClass, entry.startTime);
+              const inst = new AnimClass();
+              const isLooping = LOOPING_ANIMATIONS.has(animName);
+              const isFX = animName.startsWith('FX');
+              // For looping animations or FX, stretch to fill the entry duration
+              // For one-shot body animations, also stretch if entry is longer
+              // (they will hold their final pose via the blend system)
+              if (isLooping || isFX || entryDuration > inst.duration) {
+                char.playAnimation(AnimClass, entry.startTime, entryDuration);
+              } else {
+                char.playAnimation(AnimClass, entry.startTime);
+              }
             }
           }
         }
       }
     }
+
+    // Auto-insert idle animations for characters with long gaps between animations
+    this._scheduleIdleAnimations();
 
     // Queue camera moves from SRT entries
     for (const entry of this.entries) {
@@ -306,6 +323,32 @@ export class Storyboard {
         } else {
           console.warn(`Camera move "${name}" not found in registry.`);
         }
+      }
+    }
+
+    // Auto-detect hit pairs and store hitstop data for runtime triggering
+    const ATTACK_ANIMATIONS = ['Punch', 'SpiritSwordSwing', 'SpiritGunFire', 'ComboPunch', 'Kick'];
+    const REACTION_ANIMATIONS = ['HitStagger', 'Block'];
+    for (let i = 0; i < this.entries.length - 1; i++) {
+      const entry = this.entries[i];
+      const nextEntry = this.entries[i + 1];
+      if (!entry.character || !nextEntry.character) continue;
+      if (entry.character === nextEntry.character) continue;
+      if (!entry.animations || !nextEntry.animations) continue;
+      const hasAttack = entry.animations.some((a) => ATTACK_ANIMATIONS.includes(a));
+      const hasReaction = nextEntry.animations.some((a) => REACTION_ANIMATIONS.includes(a));
+      if (hasAttack && hasReaction) {
+        // Store on the entry so we can trigger at the correct time during update
+        entry._autoHitstop = { time: entry.endTime, duration: 0.1, shake: 0.4 };
+      }
+    }
+
+    // Parse explicit {Hitstop|duration=...|shake=...} tags from SRT entries
+    for (const entry of this.entries) {
+      if (entry.hitstop) {
+        const duration = entry.hitstop.options.duration ?? 0.1;
+        const shake = entry.hitstop.options.shake ?? 0.3;
+        entry._explicitHitstop = { time: entry.startTime, duration, shake };
       }
     }
 
@@ -819,6 +862,25 @@ export class Storyboard {
   update(forcedTime) {
     const t = forcedTime !== undefined ? forcedTime : this.getCurrentTime();
 
+    // Hitstop: check if we are in a freeze frame
+    const isHitstop = this.hitstopManager.update(t);
+
+    // Trigger auto-detected and explicit hitstops at their designated times
+    for (const entry of this.entries) {
+      if (entry._autoHitstop && t >= entry._autoHitstop.time && t < entry._autoHitstop.time + 0.05) {
+        if (!entry._autoHitstopTriggered) {
+          entry._autoHitstopTriggered = true;
+          this.hitstopManager.trigger(entry._autoHitstop.duration, entry._autoHitstop.shake, true);
+        }
+      }
+      if (entry._explicitHitstop && t >= entry._explicitHitstop.time && t < entry._explicitHitstop.time + 0.05) {
+        if (!entry._explicitHitstopTriggered) {
+          entry._explicitHitstopTriggered = true;
+          this.hitstopManager.trigger(entry._explicitHitstop.duration, entry._explicitHitstop.shake, true);
+        }
+      }
+    }
+
     // Scene switches — find the most recent scene entry whose startTime has passed
     let targetScene = null;
     for (const entry of this.entries) {
@@ -833,348 +895,360 @@ export class Storyboard {
     // Transition effects
     this._updateTransitions(t);
 
-    // Dynamic character add/remove based on speaking time
-    // Characters are added to scene just before their first line and removed after their last line
-    if (this.currentScene) {
+    // SFX visual sync: trigger visual pulses when SFX events fire
+    this._updateSFXVisuals(t);
+
+    if (!isHitstop) {
+      // Dynamic character add/remove based on speaking time
+      // Characters are added to scene just before their first line and removed after their last line
+      if (this.currentScene) {
+        for (const entry of this.entries) {
+          if (!entry.character) continue;
+          const char = this.characters.get(entry.character);
+          if (!char) continue;
+
+          const isInScene = this.currentScene.characters.includes(char);
+          const isSpeakingWindow = t >= entry.startTime - 0.5 && t <= entry.endTime + 0.3;
+          const isCurrentScene = this.currentSceneName && this.characterScenes.get(entry.character)?.has(this.currentSceneName);
+
+          if (isSpeakingWindow && isCurrentScene && !isInScene) {
+            // Character enters scene just before speaking
+            // console.log('[update] adding', entry.character, 'to', this.currentSceneName, 't=', t.toFixed(2), 'for speaking');
+            this.currentScene.addCharacter(char);
+            // Teleport to a reasonable position if no prior position set
+            if (char.mesh.position.x === 0 && char.mesh.position.z === 0) {
+              const charsInScene = this.currentScene.characters.length;
+              if (charsInScene === 1) {
+                char.setPosition(0, 0, 0);
+              } else if (charsInScene === 2) {
+                char.setPosition(1.5, 0, 0);
+              } else {
+                const spacing = 2;
+                const offset = ((charsInScene - 1) * spacing) / 2;
+                char.setPosition((charsInScene - 1) * spacing - offset, 0, 0);
+              }
+              char.mesh.lookAt(0, 1.5, 5);
+            }
+          }
+        }
+
+        // Remove characters whose last line in this scene has ended (with small grace period)
+        for (const [name, char] of this.characters) {
+          if (!this.currentScene.characters.includes(char)) {
+            // console.log('[update] skip remove', name, 'not in scene');
+            continue;
+          }
+          const scenes = this.characterScenes.get(name);
+          if (!scenes || !scenes.has(this.currentSceneName)) {
+            // console.log('[update] skip remove', name, 'not in characterScenes for', this.currentSceneName);
+            continue;
+          }
+
+          // Find the last entry for this character in the current scene
+          let lastEndTime = -1;
+          let sceneCursor = this.entries.find((e) => e.scene)?.scene || this.currentSceneName;
+          for (const entry of this.entries) {
+            if (entry.scene) sceneCursor = entry.scene;
+            if (entry.character === name && sceneCursor === this.currentSceneName) {
+              lastEndTime = Math.max(lastEndTime, entry.endTime);
+            }
+          }
+
+          // Also consider storyEvents (e.g., Event:Move) for this character in this scene
+          let eventEndTime = -1;
+          let eventSceneCursor = this.entries.find((e) => e.scene)?.scene || this.currentSceneName;
+          for (const entry of this.entries) {
+            if (entry.scene) eventSceneCursor = entry.scene;
+            if (eventSceneCursor === this.currentSceneName && entry.storyEvents) {
+              for (const ev of entry.storyEvents) {
+                if (ev.options.character === name) {
+                  const evEnd = entry.startTime + (ev.options.duration || 1.0);
+                  eventEndTime = Math.max(eventEndTime, evEnd);
+                }
+              }
+            }
+          }
+
+          // Also consider storyPlacements: if character has explicit positions in this scene,
+          // extend their presence to the end of the scene (last entry in this scene)
+          let placementEndTime = -1;
+          let placementSceneCursor = this.entries.find((e) => e.scene)?.scene || this.currentSceneName;
+          for (const entry of this.entries) {
+            if (entry.scene) placementSceneCursor = entry.scene;
+            if (placementSceneCursor === this.currentSceneName && entry.positions) {
+              for (const pos of entry.positions) {
+                if (pos.name === name) {
+                  placementEndTime = Math.max(placementEndTime, entry.endTime);
+                }
+              }
+            }
+          }
+
+          const effectiveLastEndTime = Math.max(lastEndTime, eventEndTime, placementEndTime);
+
+          // If current time is past their last line/event/placement + grace, remove them
+          if (effectiveLastEndTime > 0 && t > effectiveLastEndTime + 1.0) {
+            // console.log('[update] removing', name, 'from', this.currentSceneName, 't=', t.toFixed(2), 'lastEndTime=', lastEndTime, 'eventEndTime=', eventEndTime, 'placementEndTime=', placementEndTime);
+            this.currentScene.removeCharacter(char);
+          }
+        }
+        // console.log('[update t=' + t.toFixed(2) + '] chars in', this.currentSceneName, ':', this.currentScene.characters.map(c => c.constructor.name).join(','));
+      }
+
+      // Character speaking states - only speak if there's actual audio/subtitle
+      for (const char of this.characters.values()) {
+        char.stopSpeaking();
+      }
       for (const entry of this.entries) {
-        if (!entry.character) continue;
-        const char = this.characters.get(entry.character);
-        if (!char) continue;
-
-        const isInScene = this.currentScene.characters.includes(char);
-        const isSpeakingWindow = t >= entry.startTime - 0.5 && t <= entry.endTime + 0.3;
-        const isCurrentScene = this.currentSceneName && this.characterScenes.get(entry.character)?.has(this.currentSceneName);
-
-        if (isSpeakingWindow && isCurrentScene && !isInScene) {
-          // Character enters scene just before speaking
-          // console.log('[update] adding', entry.character, 'to', this.currentSceneName, 't=', t.toFixed(2), 'for speaking');
-          this.currentScene.addCharacter(char);
-          // Teleport to a reasonable position if no prior position set
-          if (char.mesh.position.x === 0 && char.mesh.position.z === 0) {
-            const charsInScene = this.currentScene.characters.length;
-            if (charsInScene === 1) {
-              char.setPosition(0, 0, 0);
-            } else if (charsInScene === 2) {
-              char.setPosition(1.5, 0, 0);
-            } else {
-              const spacing = 2;
-              const offset = ((charsInScene - 1) * spacing) / 2;
-              char.setPosition((charsInScene - 1) * spacing - offset, 0, 0);
-            }
-            char.mesh.lookAt(0, 1.5, 5);
-          }
-        }
-      }
-
-      // Remove characters whose last line in this scene has ended (with small grace period)
-      for (const [name, char] of this.characters) {
-        if (!this.currentScene.characters.includes(char)) {
-          // console.log('[update] skip remove', name, 'not in scene');
-          continue;
-        }
-        const scenes = this.characterScenes.get(name);
-        if (!scenes || !scenes.has(this.currentSceneName)) {
-          // console.log('[update] skip remove', name, 'not in characterScenes for', this.currentSceneName);
-          continue;
-        }
-
-        // Find the last entry for this character in the current scene
-        let lastEndTime = -1;
-        let sceneCursor = this.entries.find((e) => e.scene)?.scene || this.currentSceneName;
-        for (const entry of this.entries) {
-          if (entry.scene) sceneCursor = entry.scene;
-          if (entry.character === name && sceneCursor === this.currentSceneName) {
-            lastEndTime = Math.max(lastEndTime, entry.endTime);
-          }
-        }
-
-        // Also consider storyEvents (e.g., Event:Move) for this character in this scene
-        let eventEndTime = -1;
-        let eventSceneCursor = this.entries.find((e) => e.scene)?.scene || this.currentSceneName;
-        for (const entry of this.entries) {
-          if (entry.scene) eventSceneCursor = entry.scene;
-          if (eventSceneCursor === this.currentSceneName && entry.storyEvents) {
-            for (const ev of entry.storyEvents) {
-              if (ev.options.character === name) {
-                const evEnd = entry.startTime + (ev.options.duration || 1.0);
-                eventEndTime = Math.max(eventEndTime, evEnd);
-              }
+        if (entry.character && t >= entry.startTime && t <= entry.endTime) {
+          const char = this.characters.get(entry.character);
+          if (char) {
+            const slotDuration = entry.endTime - entry.startTime;
+            const audioDur = this.audioDurations.get(entry.index);
+            // Only speak if there's actual audio duration (real voice/subtitle)
+            if (audioDur && audioDur > 0) {
+              const speakDuration = Math.min(audioDur + 0.15, slotDuration);
+              char.speak(entry.startTime, speakDuration);
             }
           }
         }
+      }
 
-        // Also consider storyPlacements: if character has explicit positions in this scene,
-        // extend their presence to the end of the scene (last entry in this scene)
-        let placementEndTime = -1;
-        let placementSceneCursor = this.entries.find((e) => e.scene)?.scene || this.currentSceneName;
-        for (const entry of this.entries) {
-          if (entry.scene) placementSceneCursor = entry.scene;
-          if (placementSceneCursor === this.currentSceneName && entry.positions) {
-            for (const pos of entry.positions) {
-              if (pos.name === name) {
-                placementEndTime = Math.max(placementEndTime, entry.endTime);
-              }
+      // TandemFlight: Xiaoyue rides on Xingzai's back
+      const xingzai = this.characters.get('Xingzai');
+      const xiaoyue = this.characters.get('Xiaoyue');
+      if (xingzai && xiaoyue && xingzai.mesh && xiaoyue.mesh) {
+        // Check if Xingzai is currently playing TandemFlight
+        const isTandemFlying = xingzai.animations.some(
+          (a) => a.instance.name === 'TandemFlight' && t >= a.startTime && t <= a.endTime
+        );
+        if (isTandemFlying) {
+          // Set Xingzai's baseY to flying altitude so the animation keeps him in the air
+          const flyHeight = 4;
+          xingzai.baseY = flyHeight;
+
+          // Position Xiaoyue on Xingzai's back
+          const xzPos = xingzai.mesh.position;
+          const xzRot = xingzai.mesh.rotation.x;
+          // When Xingzai leans forward (rot.x ~ 0.9), his back faces up-backward
+          // Place Xiaoyue lower on his back, not on his head
+          const offsetY = 0.5;  // lower on the back
+          const offsetZ = -0.3; // slightly behind
+          xiaoyue.mesh.position.set(xzPos.x, xzPos.y + offsetY, xzPos.z + offsetZ);
+          xiaoyue.mesh.rotation.x = xzRot;
+
+          // Ensure both are in the scene
+          if (this.currentScene) {
+            if (!this.currentScene.characters.includes(xingzai)) {
+              this.currentScene.addCharacter(xingzai);
+            }
+            if (!this.currentScene.characters.includes(xiaoyue)) {
+              this.currentScene.addCharacter(xiaoyue);
             }
           }
         }
-
-        const effectiveLastEndTime = Math.max(lastEndTime, eventEndTime, placementEndTime);
-
-        // If current time is past their last line/event/placement + grace, remove them
-        if (effectiveLastEndTime > 0 && t > effectiveLastEndTime + 1.0) {
-          // console.log('[update] removing', name, 'from', this.currentSceneName, 't=', t.toFixed(2), 'lastEndTime=', lastEndTime, 'eventEndTime=', eventEndTime, 'placementEndTime=', placementEndTime);
-          this.currentScene.removeCharacter(char);
-        }
-      }
-      // console.log('[update t=' + t.toFixed(2) + '] chars in', this.currentSceneName, ':', this.currentScene.characters.map(c => c.constructor.name).join(','));
-    }
-
-    // Character speaking states - only speak if there's actual audio/subtitle
-    for (const char of this.characters.values()) {
-      char.stopSpeaking();
-    }
-    for (const entry of this.entries) {
-      if (entry.character && t >= entry.startTime && t <= entry.endTime) {
-        const char = this.characters.get(entry.character);
-        if (char) {
-          const slotDuration = entry.endTime - entry.startTime;
-          const audioDur = this.audioDurations.get(entry.index);
-          // Only speak if there's actual audio duration (real voice/subtitle)
-          if (audioDur && audioDur > 0) {
-            const speakDuration = Math.min(audioDur + 0.15, slotDuration);
-            char.speak(entry.startTime, speakDuration);
-          }
-        }
-      }
-    }
-
-    // TandemFlight: Xiaoyue rides on Xingzai's back
-    const xingzai = this.characters.get('Xingzai');
-    const xiaoyue = this.characters.get('Xiaoyue');
-    if (xingzai && xiaoyue && xingzai.mesh && xiaoyue.mesh) {
-      // Check if Xingzai is currently playing TandemFlight
-      const isTandemFlying = xingzai.animations.some(
-        (a) => a.instance.name === 'TandemFlight' && t >= a.startTime && t <= a.endTime
-      );
-      if (isTandemFlying) {
-        // Set Xingzai's baseY to flying altitude so the animation keeps him in the air
-        const flyHeight = 4;
-        xingzai.baseY = flyHeight;
-
-        // Position Xiaoyue on Xingzai's back
-        const xzPos = xingzai.mesh.position;
-        const xzRot = xingzai.mesh.rotation.x;
-        // When Xingzai leans forward (rot.x ~ 0.9), his back faces up-backward
-        // Place Xiaoyue lower on his back, not on his head
-        const offsetY = 0.5;  // lower on the back
-        const offsetZ = -0.3; // slightly behind
-        xiaoyue.mesh.position.set(xzPos.x, xzPos.y + offsetY, xzPos.z + offsetZ);
-        xiaoyue.mesh.rotation.x = xzRot;
-
-        // Ensure both are in the scene
-        if (this.currentScene) {
-          if (!this.currentScene.characters.includes(xingzai)) {
-            this.currentScene.addCharacter(xingzai);
-          }
-          if (!this.currentScene.characters.includes(xiaoyue)) {
-            this.currentScene.addCharacter(xiaoyue);
-          }
-        }
-      }
-    }
-
-    // Park scene tennis ball choreography (driven by CourtDirector)
-    if (this.currentSceneName === 'ParkScene') {
-      const parkScene = this.currentScene;
-      let activeEvent = null;
-
-      for (const ev of this.ballEvents) {
-        const endTime = ev.startTime + ev.flight.duration;
-        if (t >= ev.startTime && t < endTime) {
-          activeEvent = ev;
-          break;
-        }
       }
 
-      if (activeEvent) {
-        const f = activeEvent.flight;
-        parkScene.setBallTrajectory(activeEvent.startTime, activeEvent.startTime + f.duration, f.startPos, f.endPos, f.arcHeight);
+      // Park scene tennis ball choreography (driven by CourtDirector)
+      if (this.currentSceneName === 'ParkScene') {
+        const parkScene = this.currentScene;
+        let activeEvent = null;
 
-        // Characters track the ball with their eyes
-        if (parkScene.tennisBall) {
-          const ballPos = parkScene.tennisBall.position;
-          const hitter = this.characters.get(activeEvent.from);
-          const receiver = activeEvent.to ? this.characters.get(activeEvent.to) : null;
-
-          if (hitter) {
-            hitter.lookAtTarget(ballPos, t, t + 0.5);
-          }
-          if (receiver) {
-            receiver.lookAtTarget(ballPos, t, t + 0.5);
-          }
-        }
-      } else {
-        parkScene.clearBallTrajectory();
-
-        // Find the most recent completed event and park the ball there
-        let lastEvent = null;
         for (const ev of this.ballEvents) {
           const endTime = ev.startTime + ev.flight.duration;
-          if (t >= endTime) {
-            lastEvent = ev;
+          if (t >= ev.startTime && t < endTime) {
+            activeEvent = ev;
+            break;
           }
         }
 
-        if (lastEvent && parkScene.tennisBall) {
-          parkScene.tennisBall.position.set(lastEvent.flight.endPos.x, lastEvent.flight.endPos.y, lastEvent.flight.endPos.z);
-        } else if (t < (this.ballEvents[0]?.startTime ?? Infinity) && parkScene.tennisBall) {
-          // Before first rally: ball rests near Doraemon
-          const doraPos = this.courtDirector?.getPlayerPosition('Doraemon');
-          if (doraPos) {
-            parkScene.tennisBall.position.set(doraPos.x + 0.3, doraPos.y + 1.0, doraPos.z + 0.3);
+        if (activeEvent) {
+          const f = activeEvent.flight;
+          parkScene.setBallTrajectory(activeEvent.startTime, activeEvent.startTime + f.duration, f.startPos, f.endPos, f.arcHeight);
+
+          // Characters track the ball with their eyes
+          if (parkScene.tennisBall) {
+            const ballPos = parkScene.tennisBall.position;
+            const hitter = this.characters.get(activeEvent.from);
+            const receiver = activeEvent.to ? this.characters.get(activeEvent.to) : null;
+
+            if (hitter) {
+              hitter.lookAtTarget(ballPos, t, t + 0.5);
+            }
+            if (receiver) {
+              receiver.lookAtTarget(ballPos, t, t + 0.5);
+            }
+          }
+        } else {
+          parkScene.clearBallTrajectory();
+
+          // Find the most recent completed event and park the ball there
+          let lastEvent = null;
+          for (const ev of this.ballEvents) {
+            const endTime = ev.startTime + ev.flight.duration;
+            if (t >= endTime) {
+              lastEvent = ev;
+            }
+          }
+
+          if (lastEvent && parkScene.tennisBall) {
+            parkScene.tennisBall.position.set(lastEvent.flight.endPos.x, lastEvent.flight.endPos.y, lastEvent.flight.endPos.z);
+          } else if (t < (this.ballEvents[0]?.startTime ?? Infinity) && parkScene.tennisBall) {
+            // Before first rally: ball rests near Doraemon
+            const doraPos = this.courtDirector?.getPlayerPosition('Doraemon');
+            if (doraPos) {
+              parkScene.tennisBall.position.set(doraPos.x + 0.3, doraPos.y + 1.0, doraPos.z + 0.3);
+            }
+          }
+
+          // When ball is idle, characters look at each other
+          const dora = this.characters.get('Doraemon');
+          const nobi = this.characters.get('Nobita');
+          if (dora && nobi) {
+            const doraHead = new THREE.Vector3().copy(dora.mesh.position);
+            doraHead.y += 1.6;
+            const nobiHead = new THREE.Vector3().copy(nobi.mesh.position);
+            nobiHead.y += 1.5;
+            dora.lookAtTarget(nobiHead, t, t + 0.5);
+            nobi.lookAtTarget(doraHead, t, t + 0.5);
           }
         }
+      }
 
-        // When ball is idle, characters look at each other
-        const dora = this.characters.get('Doraemon');
-        const nobi = this.characters.get('Nobita');
-        if (dora && nobi) {
-          const doraHead = new THREE.Vector3().copy(dora.mesh.position);
-          doraHead.y += 1.6;
-          const nobiHead = new THREE.Vector3().copy(nobi.mesh.position);
-          nobiHead.y += 1.5;
-          dora.lookAtTarget(nobiHead, t, t + 0.5);
-          nobi.lookAtTarget(doraHead, t, t + 0.5);
+      if (this.currentScene) {
+        // Trigger time-based scene events (e.g., SharkAppear at specific entry time)
+        for (const entry of this.entries) {
+          if (entry.storyEvents && t >= entry.startTime) {
+            entry._sceneEventsTriggered = entry._sceneEventsTriggered || {};
+            for (const ev of entry.storyEvents) {
+              const evKey = ev.options.action ? ev.name + ':' + ev.options.action : ev.name;
+              if (entry._sceneEventsTriggered[evKey]) continue; // already triggered
+              entry._sceneEventsTriggered[evKey] = true;
+
+              if (ev.name === 'SharkAppear' && this.currentScene.showShark) {
+                this.currentScene.showShark();
+              }
+              // SharkOrbit: switch shark to orbit mode around a character
+              if (ev.name === 'SharkOrbit' && this.currentScene.setSharkOrbitMode) {
+                const targetChar = ev.options.character || 'Nobita';
+                let cx = 0, cz = -8;
+                for (const ch of this.currentScene.characters) {
+                  if (ch.name === targetChar) {
+                    cx = ch.mesh.position.x;
+                    cz = ch.mesh.position.z;
+                    break;
+                  }
+                }
+                this.currentScene.setSharkOrbitMode(cx, cz, ev.options.radius ? parseFloat(ev.options.radius) : 4);
+              }
+              // SplashStart: activate splash particles on a character
+              if (ev.name === 'SplashStart' && this.currentScene.setSplashTarget) {
+                const targetChar = ev.options.character || 'Nobita';
+                for (const ch of this.currentScene.characters) {
+                  if (ch.name === targetChar) {
+                    this.currentScene.setSplashTarget(ch.mesh);
+                    break;
+                  }
+                }
+              }
+              // SplashStop: deactivate splash particles
+              if (ev.name === 'SplashStop' && this.currentScene.stopSplash) {
+                this.currentScene.stopSplash();
+              }
+              // RescueTakecopter: rescue character with takecopter
+              if (ev.name === 'RescueTakecopter' && this.currentScene.rescueWithTakecopter) {
+                this.currentScene.rescueWithTakecopter(ev.options.character || 'Nobita');
+              }
+              // OpenDrawer: animate drawer sliding open (DrawerScene)
+              if (ev.name === 'OpenDrawer' && this.currentScene.openDrawer) {
+                this.currentScene.openDrawer(entry.startTime);
+              }
+              // ExtinguishZodiacFlame: extinguish a zodiac flame by index
+              if (ev.name === 'ExtinguishZodiacFlame' && this.currentScene.extinguishZodiacFlame) {
+                const idx = ev.options.index !== undefined ? parseInt(ev.options.index) : 0;
+                this.currentScene.extinguishZodiacFlame(idx);
+              }
+              // Generic scene event: if the scene has a method matching the event name, call it
+              const sceneMethod = ev.name.charAt(0).toLowerCase() + ev.name.slice(1);
+              if (typeof this.currentScene[sceneMethod] === 'function') {
+                this.currentScene[sceneMethod]();
+              }
+              // Also try exact match (for methods like summonCourierShip)
+              if (typeof this.currentScene[ev.name] === 'function') {
+                this.currentScene[ev.name]();
+              }
+              // Hide character
+              if (ev.name === 'Hide') {
+                const char = this.characters.get(ev.options.character);
+                if (char && char.mesh) {
+                  char.mesh.visible = false;
+                }
+              }
+              // Show character
+              if (ev.name === 'Show') {
+                const char = this.characters.get(ev.options.character);
+                if (char && char.mesh) {
+                  char.mesh.visible = true;
+                }
+              }
+              // ShowAura: activate aura rings on a character
+              if (ev.name === 'ShowAura') {
+                const char = this.characters.get(ev.options.character);
+                if (char && char.showAura) {
+                  char.showAura();
+                }
+              }
+              // HideAura: deactivate aura rings on a character
+              if (ev.name === 'HideAura') {
+                const char = this.characters.get(ev.options.character);
+                if (char && char.hideAura) {
+                  char.hideAura();
+                }
+              }
+              // ShowBeam: activate beam from one character to another
+              if (ev.name === 'ShowBeam') {
+                const fromChar = this.characters.get(ev.options.from);
+                const toChar = this.characters.get(ev.options.to);
+                if (fromChar && toChar && fromChar.setBeamTarget) {
+                  const targetPos = new THREE.Vector3();
+                  toChar.mesh.getWorldPosition(targetPos);
+                  fromChar.setBeamTarget(targetPos);
+                }
+              }
+              // HideBeam: deactivate beam
+              if (ev.name === 'HideBeam') {
+                const char = this.characters.get(ev.options.character);
+                if (char && char.hideBeam) {
+                  char.hideBeam();
+                }
+              }
+            }
+          }
         }
+        // console.log('[update t=' + t.toFixed(2) + '] BEFORE currentScene.update, chars count=', this.currentScene.characters.length);
+        this.currentScene.update(t, 0.016);
+        // console.log('[update t=' + t.toFixed(2) + '] AFTER currentScene.update, chars count=', this.currentScene.characters.length, 'scene=', this.currentScene.name);
+        // DEBUG: log character positions (uncomment when needed)
+        // if (this.currentSceneName === 'WhisperingWoodsScene' && t >= 101 && t <= 103) {
+        //   const chars = this.currentScene.characters;
+        //   console.log('[update t=' + t.toFixed(2) + '] chars in ' + this.currentSceneName + ' count=' + chars.length);
+        //   for (let i = 0; i < chars.length; i++) {
+        //     const c = chars[i];
+        //     if (c) {
+        //       console.log('  [' + i + '] name=' + c.name + ' pos=' + c.mesh.position.x.toFixed(2) + ',' + c.mesh.position.y.toFixed(2) + ',' + c.mesh.position.z.toFixed(2) + ' visible=' + c.mesh.visible + ' rot=' + c.mesh.rotation.x.toFixed(2) + ',' + c.mesh.rotation.y.toFixed(2) + ',' + c.mesh.rotation.z.toFixed(2));
+        //     } else {
+        //       console.log('  [' + i + '] UNDEFINED');
+        //     }
+        //   }
+        // }
       }
     }
 
-    if (this.currentScene) {
-      // Trigger time-based scene events (e.g., SharkAppear at specific entry time)
-      for (const entry of this.entries) {
-        if (entry.storyEvents && t >= entry.startTime) {
-          entry._sceneEventsTriggered = entry._sceneEventsTriggered || {};
-          for (const ev of entry.storyEvents) {
-            const evKey = ev.options.action ? ev.name + ':' + ev.options.action : ev.name;
-            if (entry._sceneEventsTriggered[evKey]) continue; // already triggered
-            entry._sceneEventsTriggered[evKey] = true;
-
-            if (ev.name === 'SharkAppear' && this.currentScene.showShark) {
-              this.currentScene.showShark();
-            }
-            // SharkOrbit: switch shark to orbit mode around a character
-            if (ev.name === 'SharkOrbit' && this.currentScene.setSharkOrbitMode) {
-              const targetChar = ev.options.character || 'Nobita';
-              let cx = 0, cz = -8;
-              for (const ch of this.currentScene.characters) {
-                if (ch.name === targetChar) {
-                  cx = ch.mesh.position.x;
-                  cz = ch.mesh.position.z;
-                  break;
-                }
-              }
-              this.currentScene.setSharkOrbitMode(cx, cz, ev.options.radius ? parseFloat(ev.options.radius) : 4);
-            }
-            // SplashStart: activate splash particles on a character
-            if (ev.name === 'SplashStart' && this.currentScene.setSplashTarget) {
-              const targetChar = ev.options.character || 'Nobita';
-              for (const ch of this.currentScene.characters) {
-                if (ch.name === targetChar) {
-                  this.currentScene.setSplashTarget(ch.mesh);
-                  break;
-                }
-              }
-            }
-            // SplashStop: deactivate splash particles
-            if (ev.name === 'SplashStop' && this.currentScene.stopSplash) {
-              this.currentScene.stopSplash();
-            }
-            // RescueTakecopter: rescue character with takecopter
-            if (ev.name === 'RescueTakecopter' && this.currentScene.rescueWithTakecopter) {
-              this.currentScene.rescueWithTakecopter(ev.options.character || 'Nobita');
-            }
-            // OpenDrawer: animate drawer sliding open (DrawerScene)
-            if (ev.name === 'OpenDrawer' && this.currentScene.openDrawer) {
-              this.currentScene.openDrawer(entry.startTime);
-            }
-            // ExtinguishZodiacFlame: extinguish a zodiac flame by index
-            if (ev.name === 'ExtinguishZodiacFlame' && this.currentScene.extinguishZodiacFlame) {
-              const idx = ev.options.index !== undefined ? parseInt(ev.options.index) : 0;
-              this.currentScene.extinguishZodiacFlame(idx);
-            }
-            // Generic scene event: if the scene has a method matching the event name, call it
-            const sceneMethod = ev.name.charAt(0).toLowerCase() + ev.name.slice(1);
-            if (typeof this.currentScene[sceneMethod] === 'function') {
-              this.currentScene[sceneMethod]();
-            }
-            // Also try exact match (for methods like summonCourierShip)
-            if (typeof this.currentScene[ev.name] === 'function') {
-              this.currentScene[ev.name]();
-            }
-            // Hide character
-            if (ev.name === 'Hide') {
-              const char = this.characters.get(ev.options.character);
-              if (char && char.mesh) {
-                char.mesh.visible = false;
-              }
-            }
-            // Show character
-            if (ev.name === 'Show') {
-              const char = this.characters.get(ev.options.character);
-              if (char && char.mesh) {
-                char.mesh.visible = true;
-              }
-            }
-            // ShowAura: activate aura rings on a character
-            if (ev.name === 'ShowAura') {
-              const char = this.characters.get(ev.options.character);
-              if (char && char.showAura) {
-                char.showAura();
-              }
-            }
-            // HideAura: deactivate aura rings on a character
-            if (ev.name === 'HideAura') {
-              const char = this.characters.get(ev.options.character);
-              if (char && char.hideAura) {
-                char.hideAura();
-              }
-            }
-            // ShowBeam: activate beam from one character to another
-            if (ev.name === 'ShowBeam') {
-              const fromChar = this.characters.get(ev.options.from);
-              const toChar = this.characters.get(ev.options.to);
-              if (fromChar && toChar && fromChar.setBeamTarget) {
-                const targetPos = new THREE.Vector3();
-                toChar.mesh.getWorldPosition(targetPos);
-                fromChar.setBeamTarget(targetPos);
-              }
-            }
-            // HideBeam: deactivate beam
-            if (ev.name === 'HideBeam') {
-              const char = this.characters.get(ev.options.character);
-              if (char && char.hideBeam) {
-                char.hideBeam();
-              }
-            }
-          }
-        }
-      }
-      // console.log('[update t=' + t.toFixed(2) + '] BEFORE currentScene.update, chars count=', this.currentScene.characters.length);
-      this.currentScene.update(t, 0.016);
-      // console.log('[update t=' + t.toFixed(2) + '] AFTER currentScene.update, chars count=', this.currentScene.characters.length, 'scene=', this.currentScene.name);
-      // DEBUG: log character positions (uncomment when needed)
-      // if (this.currentSceneName === 'WhisperingWoodsScene' && t >= 101 && t <= 103) {
-      //   const chars = this.currentScene.characters;
-      //   console.log('[update t=' + t.toFixed(2) + '] chars in ' + this.currentSceneName + ' count=' + chars.length);
-      //   for (let i = 0; i < chars.length; i++) {
-      //     const c = chars[i];
-      //     if (c) {
-      //       console.log('  [' + i + '] name=' + c.name + ' pos=' + c.mesh.position.x.toFixed(2) + ',' + c.mesh.position.y.toFixed(2) + ',' + c.mesh.position.z.toFixed(2) + ' visible=' + c.mesh.visible + ' rot=' + c.mesh.rotation.x.toFixed(2) + ',' + c.mesh.rotation.y.toFixed(2) + ',' + c.mesh.rotation.z.toFixed(2));
-      //     } else {
-      //       console.log('  [' + i + '] UNDEFINED');
-      //     }
-      //   }
-      // }
+    // Camera shake from hitstop (applied even during freeze so the screen still shakes)
+    if (this.hitstopManager.isShaking(t)) {
+      const offset = this.hitstopManager.getShakeOffset(t);
+      this.camera.position.x += offset.x;
+      this.camera.position.y += offset.y;
     }
 
     // Camera moves
@@ -1212,6 +1286,129 @@ export class Storyboard {
       this.renderer.autoClear = false;
       this.renderer.render(this.transitionScene, this.camera);
       this.renderer.autoClear = autoClear;
+    }
+  }
+
+  /**
+   * Auto-schedule idle SwayBody animations for characters that have
+   * gaps longer than 1 second with no active animation.
+   */
+  _scheduleIdleAnimations() {
+    const SwayBody = AnimationRegistry['SwayBody'];
+    if (!SwayBody) return;
+
+    for (const [charName, char] of this.characters) {
+      // Collect all animation time ranges for this character
+      const ranges = [];
+      for (const anim of char.animations) {
+        ranges.push({ start: anim.startTime, end: anim.endTime });
+      }
+      // Also include move durations as "active" time
+      for (const move of char.moves) {
+        ranges.push({ start: move.startTime, end: move.endTime });
+      }
+      ranges.sort((a, b) => a.start - b.start);
+
+      // Merge overlapping ranges
+      const merged = [];
+      for (const r of ranges) {
+        if (merged.length === 0 || r.start > merged[merged.length - 1].end + 0.1) {
+          merged.push({ start: r.start, end: r.end });
+        } else {
+          merged[merged.length - 1].end = Math.max(merged[merged.length - 1].end, r.end);
+        }
+      }
+
+      // Find gaps > 1s and fill with SwayBody
+      let lastEnd = 0;
+      for (const m of merged) {
+        if (m.start - lastEnd > 1.0) {
+          char.playAnimation(SwayBody, lastEnd + 0.1, m.start - lastEnd - 0.2);
+        }
+        lastEnd = m.end;
+      }
+      // Fill gap after last animation to end of episode
+      const episodeEnd = Math.max(...this.entries.map(e => e.endTime), 0) + 2;
+      if (episodeEnd - lastEnd > 1.0) {
+        char.playAnimation(SwayBody, lastEnd + 0.1, episodeEnd - lastEnd - 0.2);
+      }
+    }
+  }
+
+  /**
+   * Trigger visual effects synchronized with SFX events.
+   * When an SFX fires, create a brief visual pulse on the character.
+   */
+  _updateSFXVisuals(t) {
+    for (const entry of this.entries) {
+      if (!entry.sfxEvents || entry.sfxEvents.length === 0) continue;
+      for (const sfx of entry.sfxEvents) {
+        const offset = sfx.options.offset || 0;
+        const triggerTime = entry.startTime + offset;
+        if (t >= triggerTime && t < triggerTime + 0.05) {
+          const key = `${entry.index}_${sfx.name}_${offset}`;
+          if (!this._sfxTriggered) this._sfxTriggered = new Set();
+          if (this._sfxTriggered.has(key)) continue;
+          this._sfxTriggered.add(key);
+
+          const char = this.characters.get(entry.character);
+          if (!char || !char.mesh) continue;
+
+          // Visual pulse: brief bright flash on the character
+          const pulse = new THREE.Mesh(
+            new THREE.SphereGeometry(0.5, 8, 8),
+            new THREE.MeshBasicMaterial({
+              color: 0xffffff,
+              transparent: true,
+              opacity: 0.3,
+              depthWrite: false,
+            })
+          );
+          pulse.position.copy(char.mesh.position);
+          pulse.position.y += 1.0;
+          if (this.currentScene) {
+            this.currentScene.scene.add(pulse);
+            // Animate and remove
+            const startT = t;
+            const animPulse = () => {
+              const elapsed = (performance.now() / 1000) - startT;
+              if (elapsed > 0.1) {
+                this.currentScene.scene.remove(pulse);
+                pulse.geometry.dispose();
+                pulse.material.dispose();
+                return;
+              }
+              pulse.scale.setScalar(1 + elapsed * 10);
+              pulse.material.opacity = 0.3 * (1 - elapsed * 10);
+              requestAnimationFrame(animPulse);
+            };
+            // For render loop compatibility, just set initial state and let it fade next frame
+            pulse.userData.sfxPulse = true;
+            pulse.userData.birthTime = t;
+          }
+        }
+      }
+    }
+
+    // Clean up old sfx pulse meshes
+    if (this.currentScene) {
+      const toRemove = [];
+      this.currentScene.scene.traverse((obj) => {
+        if (obj.userData && obj.userData.sfxPulse) {
+          const age = t - obj.userData.birthTime;
+          if (age > 0.1) {
+            toRemove.push(obj);
+          } else {
+            obj.scale.setScalar(1 + age * 10);
+            obj.material.opacity = 0.3 * (1 - age * 10);
+          }
+        }
+      });
+      for (const obj of toRemove) {
+        this.currentScene.scene.remove(obj);
+        obj.geometry.dispose();
+        obj.material.dispose();
+      }
     }
   }
 

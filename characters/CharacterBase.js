@@ -1,5 +1,13 @@
 import * as THREE from 'three';
 
+/**
+ * Character archetype tags for animation compatibility.
+ * Subclasses should set this to declare what kind of character they are.
+ * @example
+ *   this.archetypes = ['humanoid', 'fighter', 'athletic'];
+ * @type {string[]}
+ */
+
 export class CharacterBase {
   constructor(name) {
     this.name = name;
@@ -13,8 +21,23 @@ export class CharacterBase {
     this.headGroup = null;
     this.rightArm = null;
     this.leftArm = null;
+    this.rightLeg = null;
+    this.leftLeg = null;
     this.leftPupil = null;
     this.rightPupil = null;
+    // ── Facial expression system ──
+    // Eyebrows for expression animation (optional — not all characters have them)
+    this.leftEyebrow = null;
+    this.rightEyebrow = null;
+    // Eyelids for blink / squint animation (optional)
+    this.leftEyelid = null;
+    this.rightEyelid = null;
+    // Jaw for mouth opening animation (optional — some characters use mouth scale instead)
+    this.jaw = null;
+    // ── Visual effects system ──
+    // Generic effect groups that animations can spawn/modify
+    this.effectGroups = {};     // named effect groups: { hitSpark, aura, shockwave, ... }
+    this.particleEmitters = {}; // particle systems for trail / burst effects
     this.baseY = 0;
     this.isSpeaking = false;
     this.speakStartTime = 0;
@@ -22,12 +45,26 @@ export class CharacterBase {
     this.animations = []; // queued animations
     this.moves = [];      // queued position moves
     this.teleportEvents = []; // instantaneous position resets
+    // ── Animation blending system ──
+    this._poseSnapshot = null;      // snapshot before animation starts
+    this._lastAnimEndPose = null;   // pose at end of last animation
+    this._blendDuration = 0.15;     // seconds to blend between animations
+    this._idleAnim = null;          // current idle animation instance
+    this._idleStartTime = 0;
     this.eyeTracking = {
       active: false,
       target: new THREE.Vector3(),
       startTime: 0,
       endTime: 0,
     };
+    /**
+     * Archetype tags describing this character's body type and capabilities.
+     * Used by animations to check compatibility.
+     * Override in subclass to declare specific archetypes.
+     * Common values: 'humanoid', 'fighter', 'athletic', 'round', 'tiny',
+     *                'monster', 'quadruped', 'floating', 'slow', 'agile'
+     */
+    this.archetypes = ['humanoid'];
     this.build();
   }
 
@@ -143,12 +180,53 @@ export class CharacterBase {
     // Eye / head tracking
     this.updateEyeTracking(time);
 
-    // Explicit animations
+    // ── Animation blending system ──
+    // Find active animations and compute blend weights
+    const activeAnims = [];
     for (const anim of this.animations) {
       if (time >= anim.startTime && time <= anim.endTime) {
         const progress = (time - anim.startTime) / (anim.endTime - anim.startTime);
-        anim.instance.update(progress, this);
+        activeAnims.push({ anim, progress, elapsed: time - anim.startTime });
       }
+    }
+
+    if (activeAnims.length > 0) {
+      // Sort by start time (most recent first)
+      activeAnims.sort((a, b) => b.anim.startTime - a.anim.startTime);
+      const primary = activeAnims[0];
+
+      // Snapshot pose before first animation starts (once per animation sequence)
+      if (!this._poseSnapshot) {
+        this._poseSnapshot = this._snapshotPose();
+      }
+
+      // Compute blend factor: 0 = fully from snapshot/last pose, 1 = fully current animation
+      const blendFactor = Math.min(1, primary.elapsed / this._blendDuration);
+
+      // Save current state before running animation
+      const beforePose = this._snapshotPose();
+
+      // Run the animation (this modifies the actual mesh)
+      primary.anim.instance.update(primary.progress, this);
+
+      // Capture the animation's desired output
+      const animPose = this._snapshotPose();
+
+      // If we're in the blend window, interpolate from the pre-animation state
+      if (blendFactor < 1 && this._poseSnapshot) {
+        this._blendPoses(this._poseSnapshot, animPose, blendFactor);
+      }
+
+      // Record end pose for next blend when animation ends
+      if (primary.progress >= 0.99) {
+        this._lastAnimEndPose = animPose;
+        this._poseSnapshot = null; // clear for next animation
+      }
+    } else {
+      // No active animation — clear snapshot and play idle
+      this._poseSnapshot = null;
+      this._lastAnimEndPose = null;
+      this._updateIdle(time);
     }
 
     // Position moves
@@ -264,5 +342,173 @@ export class CharacterBase {
 
   lookAt(target) {
     this.mesh.lookAt(target);
+  }
+
+  /**
+   * Capture base positions/rotations/scales for all facial features
+   * so that expression animations can modify them deterministically
+   * and FaceReset can truly restore them.
+   * Call this at the very end of build() after all facial features are created.
+   */
+  /**
+   * Snapshot current pose of animatable body parts.
+   */
+  _snapshotPose() {
+    const pose = {};
+    if (this.headGroup) {
+      pose.headGroup = { rotation: this.headGroup.rotation.clone() };
+    }
+    if (this.rightArm) {
+      pose.rightArm = { rotation: this.rightArm.rotation.clone() };
+    }
+    if (this.leftArm) {
+      pose.leftArm = { rotation: this.leftArm.rotation.clone() };
+    }
+    if (this.rightLeg) {
+      pose.rightLeg = { rotation: this.rightLeg.rotation.clone() };
+    }
+    if (this.leftLeg) {
+      pose.leftLeg = { rotation: this.leftLeg.rotation.clone() };
+    }
+    if (this.mesh) {
+      pose.mesh = {
+        position: this.mesh.position.clone(),
+        rotation: this.mesh.rotation.clone(),
+      };
+    }
+    return pose;
+  }
+
+  _clonePose(pose) {
+    const cloned = {};
+    for (const key of Object.keys(pose)) {
+      cloned[key] = {};
+      for (const prop of Object.keys(pose[key])) {
+        if (pose[key][prop].clone) {
+          cloned[key][prop] = pose[key][prop].clone();
+        } else {
+          cloned[key][prop] = pose[key][prop];
+        }
+      }
+    }
+    return cloned;
+  }
+
+  _applyPose(pose) {
+    if (pose.headGroup && this.headGroup) {
+      this.headGroup.rotation.copy(pose.headGroup.rotation);
+    }
+    if (pose.rightArm && this.rightArm) {
+      this.rightArm.rotation.copy(pose.rightArm.rotation);
+    }
+    if (pose.leftArm && this.leftArm) {
+      this.leftArm.rotation.copy(pose.leftArm.rotation);
+    }
+    if (pose.rightLeg && this.rightLeg) {
+      this.rightLeg.rotation.copy(pose.rightLeg.rotation);
+    }
+    if (pose.leftLeg && this.leftLeg) {
+      this.leftLeg.rotation.copy(pose.leftLeg.rotation);
+    }
+    if (pose.mesh && this.mesh) {
+      this.mesh.position.copy(pose.mesh.position);
+      this.mesh.rotation.copy(pose.mesh.rotation);
+    }
+  }
+
+  _blendPoses(from, to, t) {
+    // t=0 -> from, t=1 -> to
+    const lerp = (a, b, f) => a + (b - a) * f;
+    const blendObj = (objFrom, objTo, objTarget, f) => {
+      if (!objFrom || !objTo || !objTarget) return;
+      for (const key of ['x', 'y', 'z']) {
+        if (objFrom[key] !== undefined && objTo[key] !== undefined) {
+          objTarget[key] = lerp(objFrom[key], objTo[key], f);
+        }
+      }
+    };
+
+    if (from.headGroup && to.headGroup && this.headGroup) {
+      blendObj(from.headGroup.rotation, to.headGroup.rotation, this.headGroup.rotation, t);
+    }
+    if (from.rightArm && to.rightArm && this.rightArm) {
+      blendObj(from.rightArm.rotation, to.rightArm.rotation, this.rightArm.rotation, t);
+    }
+    if (from.leftArm && to.leftArm && this.leftArm) {
+      blendObj(from.leftArm.rotation, to.leftArm.rotation, this.leftArm.rotation, t);
+    }
+    if (from.rightLeg && to.rightLeg && this.rightLeg) {
+      blendObj(from.rightLeg.rotation, to.rightLeg.rotation, this.rightLeg.rotation, t);
+    }
+    if (from.leftLeg && to.leftLeg && this.leftLeg) {
+      blendObj(from.leftLeg.rotation, to.leftLeg.rotation, this.leftLeg.rotation, t);
+    }
+    if (from.mesh && to.mesh && this.mesh) {
+      blendObj(from.mesh.position, to.mesh.position, this.mesh.position, t);
+      blendObj(from.mesh.rotation, to.mesh.rotation, this.mesh.rotation, t);
+    }
+  }
+
+  _updateIdle(time) {
+    // Subtle breathing sway when no animation is active
+    if (!this._idleStartTime) this._idleStartTime = time;
+    const idleT = time - this._idleStartTime;
+    const breath = Math.sin(idleT * 2.5) * 0.015;
+    if (this.mesh) {
+      this.mesh.position.y = this.baseY + breath;
+    }
+    if (this.headGroup) {
+      this.headGroup.rotation.x = Math.sin(idleT * 1.8) * 0.01;
+      this.headGroup.rotation.y = Math.sin(idleT * 1.2) * 0.008;
+    }
+    if (this.rightArm) {
+      this.rightArm.rotation.z = (this.rightArmBaseZ || 0) + Math.sin(idleT * 2.0) * 0.02;
+    }
+    if (this.leftArm) {
+      this.leftArm.rotation.z = (this.leftArmBaseZ || 0) - Math.sin(idleT * 2.0) * 0.02;
+    }
+  }
+
+  _captureFaceBaseState() {
+    const state = {};
+
+    if (this.leftEyebrow) {
+      state.leftEyebrow = {
+        position: this.leftEyebrow.position.clone(),
+        rotation: this.leftEyebrow.rotation.clone(),
+      };
+    }
+    if (this.rightEyebrow) {
+      state.rightEyebrow = {
+        position: this.rightEyebrow.position.clone(),
+        rotation: this.rightEyebrow.rotation.clone(),
+      };
+    }
+    if (this.leftEyelid) {
+      state.leftEyelid = {
+        scale: this.leftEyelid.scale.clone(),
+        position: this.leftEyelid.position.clone(),
+      };
+    }
+    if (this.rightEyelid) {
+      state.rightEyelid = {
+        scale: this.rightEyelid.scale.clone(),
+        position: this.rightEyelid.position.clone(),
+      };
+    }
+    if (this.mouth) {
+      state.mouth = {
+        scale: this.mouth.scale.clone(),
+        position: this.mouth.position.clone(),
+        rotation: this.mouth.rotation.clone(),
+      };
+    }
+    if (this.headGroup) {
+      state.headGroup = {
+        rotation: this.headGroup.rotation.clone(),
+      };
+    }
+
+    this._faceBaseState = state;
   }
 }

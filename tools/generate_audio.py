@@ -289,6 +289,105 @@ def get_mp3_duration(mp3_path):
         return None
 
 
+def generate_punch_hit_sfx(filepath, duration=0.15, sample_rate=48000):
+    """Punch impact: low thud + sharp crack."""
+    n = int(sample_rate * duration)
+    samples = []
+    for i in range(n):
+        t = i / sample_rate
+        # Low thud
+        thud = math.sin(2 * math.pi * 120 * t) * math.exp(-t / 0.03) * 0.5
+        # Sharp crack (higher freq)
+        crack = math.sin(2 * math.pi * 800 * t) * math.exp(-t / 0.01) * 0.3
+        # Noise burst
+        noise = ((i * 1103515245 + 12345) % 2147483647) / 2147483647.0 * 2 - 1
+        noise = noise * math.exp(-t / 0.02) * 0.2
+        sample = (thud + crack + noise) * 0.6
+        samples.append(sample)
+    _write_wav_mono(filepath, samples, sample_rate)
+    print(f"Generated SFX: {filepath}")
+
+
+def generate_kick_impact_sfx(filepath, duration=0.18, sample_rate=48000):
+    """Kick impact: deeper thud than punch."""
+    n = int(sample_rate * duration)
+    samples = []
+    for i in range(n):
+        t = i / sample_rate
+        # Deep thud
+        thud = math.sin(2 * math.pi * 80 * t) * math.exp(-t / 0.04) * 0.6
+        # Mid crunch
+        crunch = math.sin(2 * math.pi * 400 * t) * math.exp(-t / 0.015) * 0.25
+        # Noise
+        noise = ((i * 1103515245 + 12345) % 2147483647) / 2147483647.0 * 2 - 1
+        noise = noise * math.exp(-t / 0.025) * 0.15
+        sample = (thud + crunch + noise) * 0.6
+        samples.append(sample)
+    _write_wav_mono(filepath, samples, sample_rate)
+    print(f"Generated SFX: {filepath}")
+
+
+def generate_sword_slash_sfx(filepath, duration=0.25, sample_rate=48000):
+    """Sword slash: fast whoosh + metallic ring."""
+    n = int(sample_rate * duration)
+    samples = []
+    for i in range(n):
+        t = i / sample_rate
+        # Fast frequency sweep (high to low)
+        freq = 2000 * math.exp(-t / 0.08)
+        phase = 2 * math.pi * freq * t
+        whoosh = math.sin(phase) * math.exp(-t / 0.06) * 0.4
+        # Metallic ring
+        ring = math.sin(2 * math.pi * 1200 * t) * math.exp(-t / 0.1) * 0.2
+        # Noise burst
+        noise = ((i * 16807 + 0) % 2147483647) / 2147483647.0 * 2 - 1
+        noise = noise * math.exp(-t / 0.04) * 0.15
+        sample = (whoosh + ring + noise) * 0.5
+        samples.append(sample)
+    _write_wav_mono(filepath, samples, sample_rate)
+    print(f"Generated SFX: {filepath}")
+
+
+def generate_energy_blast_sfx(filepath, duration=0.3, sample_rate=48000):
+    """Energy blast: charging hum + explosive release."""
+    n = int(sample_rate * duration)
+    samples = []
+    for i in range(n):
+        t = i / sample_rate
+        # Charging hum (rising)
+        hum_freq = 200 + 400 * min(1.0, t / 0.1)
+        hum = math.sin(2 * math.pi * hum_freq * t) * 0.3
+        # Explosive burst at start
+        burst = math.sin(2 * math.pi * 600 * t) * math.exp(-t / 0.05) * 0.5
+        # Noise
+        noise = ((i * 1103515245 + 12345) % 2147483647) / 2147483647.0 * 2 - 1
+        noise = noise * math.exp(-t / 0.08) * 0.2
+        sample = (hum + burst + noise) * 0.5
+        samples.append(sample)
+    _write_wav_mono(filepath, samples, sample_rate)
+    print(f"Generated SFX: {filepath}")
+
+
+def generate_dash_whoosh_sfx(filepath, duration=0.2, sample_rate=48000):
+    """Dash whoosh: fast air movement."""
+    n = int(sample_rate * duration)
+    samples = []
+    for i in range(n):
+        t = i / sample_rate
+        # Rising then falling freq sweep
+        freq = 800 * (1 - t / duration) + 200
+        phase = 2 * math.pi * freq * t
+        whoosh = math.sin(phase) * 0.3
+        # Noise with envelope
+        noise = ((i * 16807 + 0) % 2147483647) / 2147483647.0 * 2 - 1
+        env = math.exp(-t / 0.08) if t > 0.02 else (t / 0.02)
+        noise = noise * env * 0.35
+        sample = (whoosh + noise) * 0.5
+        samples.append(sample)
+    _write_wav_mono(filepath, samples, sample_rate)
+    print(f"Generated SFX: {filepath}")
+
+
 def generate_tennis_hit_sfx(filepath):
     """Generate a short 'pop' tennis hit sound effect."""
     sample_rate = 48000
@@ -540,6 +639,33 @@ def schedule_sfx_from_events(story_events, manual_sfx):
         elif etype == "Scene":
             # Scene transitions can trigger ambient changes
             pass  # Ambient is handled separately if needed
+
+        elif etype == "Animation":
+            # Map fighting animations to SFX
+            if "Punch" in body or "ComboPunch" in body:
+                sfx_file = find_sfx("punch_hit", "punch", "hit")
+                if sfx_file:
+                    scheduled.append({"file": sfx_file, "startTime": t})
+            elif "Kick" in body or "SpinKick" in body:
+                sfx_file = find_sfx("kick_impact", "kick")
+                if sfx_file:
+                    scheduled.append({"file": sfx_file, "startTime": t})
+            elif "SpiritSwordSwing" in body:
+                sfx_file = find_sfx("sword_slash", "slash", "sword")
+                if sfx_file:
+                    scheduled.append({"file": sfx_file, "startTime": t})
+            elif "SpiritGunFire" in body:
+                sfx_file = find_sfx("energy_blast", "blast", "energy")
+                if sfx_file:
+                    scheduled.append({"file": sfx_file, "startTime": t})
+            elif "DashForward" in body or "JumpAttack" in body:
+                sfx_file = find_sfx("dash_whoosh", "whoosh", "dash")
+                if sfx_file:
+                    scheduled.append({"file": sfx_file, "startTime": t})
+            elif "HitStagger" in body or "Knockdown" in body:
+                sfx_file = find_sfx("impact_thud", "impact", "thud")
+                if sfx_file:
+                    scheduled.append({"file": sfx_file, "startTime": t})
 
         elif etype == "SFX":
             # Parse SFX body: Play|name=xxx|offset=1.5
@@ -978,6 +1104,11 @@ async def generate(force_tts=False):
         "impact_thud": (generate_impact_thud, 0.4),
         "whoosh_fast": (generate_whoosh_fast, 0.5),
         "takecopter_spin": (generate_takecopter_spin, 2.0),
+        "punch_hit": (generate_punch_hit_sfx, 0.15),
+        "kick_impact": (generate_kick_impact_sfx, 0.18),
+        "sword_slash": (generate_sword_slash_sfx, 0.25),
+        "energy_blast": (generate_energy_blast_sfx, 0.3),
+        "dash_whoosh": (generate_dash_whoosh_sfx, 0.2),
     }
     for name, (generator, duration) in needed_procedural.items():
         if name not in manual_sfx:
