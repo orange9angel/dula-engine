@@ -13,6 +13,7 @@ export class CharacterBase {
     this.name = name;
     this.mesh = new THREE.Group();
     this.mesh.name = name;
+    this.userData = this.mesh.userData;
     this.boundingRadius = 0.5; // Override in subclass for accurate sizing
     this.mouth = null;
     this.mouthBaseScaleX = 1;
@@ -231,8 +232,17 @@ export class CharacterBase {
         // Save current mesh state
         const preAnimPose = this._snapshotPose();
 
-        // Run the body animation (modifies mesh directly)
+        const rootPositionBeforeBody = this.mesh ? this.mesh.position.clone() : null;
+
+        // Run the body animation (modifies pose directly)
         primary.anim.instance.update(primary.progress, this);
+
+        // Body animations are pose layers. Root X/Z travel is owned by moves,
+        // combat contact solvers, and scene choreography so timeline traces stay coherent.
+        if (rootPositionBeforeBody && this.mesh) {
+          this.mesh.position.x = rootPositionBeforeBody.x;
+          this.mesh.position.z = rootPositionBeforeBody.z;
+        }
 
         // Capture what the animation wants
         const animPose = this._snapshotPose();
@@ -453,9 +463,9 @@ export class CharacterBase {
   _blendPoses(from, to, t) {
     // t=0 -> from, t=1 -> to
     const lerp = (a, b, f) => a + (b - a) * f;
-    const blendObj = (objFrom, objTo, objTarget, f) => {
+    const blendObj = (objFrom, objTo, objTarget, f, axes = ['x', 'y', 'z']) => {
       if (!objFrom || !objTo || !objTarget) return;
-      for (const key of ['x', 'y', 'z']) {
+      for (const key of axes) {
         if (objFrom[key] !== undefined && objTo[key] !== undefined) {
           objTarget[key] = lerp(objFrom[key], objTo[key], f);
         }
@@ -478,8 +488,8 @@ export class CharacterBase {
       blendObj(from.leftLeg.rotation, to.leftLeg.rotation, this.leftLeg.rotation, t);
     }
     if (from.mesh && to.mesh && this.mesh) {
-      blendObj(from.mesh.position, to.mesh.position, this.mesh.position, t);
-      blendObj(from.mesh.rotation, to.mesh.rotation, this.mesh.rotation, t);
+      blendObj(from.mesh.position, to.mesh.position, this.mesh.position, t, ['y']);
+      blendObj(from.mesh.rotation, to.mesh.rotation, this.mesh.rotation, t, ['x', 'z']);
     }
   }
 
