@@ -7,6 +7,7 @@ import { AnimationRegistry } from '../animations/index.js';
 import { CameraMoveRegistry } from '../camera/index.js';
 import { DirectorRegistry } from '../lib/DirectorRegistry.js';
 import { TransitionRegistry } from '../transitions/index.js';
+import { PostProcessRegistry } from '../postprocessing/index.js';
 import { MusicDirector, MusicCue } from '../lib/MusicDirector.js';
 import { HitstopManager } from '../lib/HitstopManager.js';
 
@@ -20,7 +21,12 @@ export class Storyboard {
   constructor(renderer, camera, audioDestination = null, outlineEffect = null) {
     this.renderer = renderer;
     this.camera = camera;
+    // outlineEffect is deprecated, use postProcesses array instead
     this.outlineEffect = outlineEffect;
+    this.postProcesses = [];
+    if (outlineEffect) {
+      this.postProcesses.push(outlineEffect);
+    }
     this.currentScene = null;
     this.currentSceneName = null;
     this.characters = new Map(); // name -> instance
@@ -1338,14 +1344,50 @@ export class Storyboard {
     }
   }
 
+  /**
+   * Add a post-processing effect to the chain.
+   * Effects are applied in order during render().
+   */
+  addPostProcess(effect) {
+    if (effect && typeof effect.render === 'function') {
+      this.postProcesses.push(effect);
+    }
+  }
+
+  /**
+   * Remove a post-processing effect by instance reference.
+   */
+  removePostProcess(effect) {
+    const idx = this.postProcesses.indexOf(effect);
+    if (idx >= 0) this.postProcesses.splice(idx, 1);
+  }
+
   render() {
-    if (this.currentScene) {
-      if (this.outlineEffect) {
-        this.outlineEffect.render(this.currentScene.scene, this.camera);
-      } else {
-        this.renderer.render(this.currentScene.scene, this.camera);
+    if (!this.currentScene) return;
+
+    const enabledEffects = this.postProcesses.filter(p => p.enabled !== false);
+
+    if (enabledEffects.length === 0) {
+      // No post-processing — render directly to screen
+      this.renderer.render(this.currentScene.scene, this.camera);
+    } else if (enabledEffects.length === 1) {
+      // Single effect — let it handle rendering (backward compatible)
+      enabledEffects[0].render(this.currentScene.scene, this.camera);
+    } else {
+      // Multiple effects — chain rendering through offscreen targets
+      // For now, each effect renders to screen sequentially.
+      // Full chain with ping-pong targets can be added later.
+      let currentTarget = null;
+      for (let i = 0; i < enabledEffects.length; i++) {
+        const effect = enabledEffects[i];
+        const isLast = i === enabledEffects.length - 1;
+        if (isLast) {
+          this.renderer.setRenderTarget(null);
+        }
+        effect.render(this.currentScene.scene, this.camera, currentTarget);
       }
     }
+
     // Render transition overlay on top
     if (this.activeTransition && this.activeTransition.overlay) {
       const autoClear = this.renderer.autoClear;

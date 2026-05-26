@@ -1,5 +1,6 @@
 import * as THREE from 'three';
 import { Storyboard } from './storyboard/Storyboard.js';
+import { PostProcessRegistry } from './postprocessing/index.js';
 
 const width = 1920;
 const height = 1080;
@@ -29,13 +30,19 @@ try {
   console.warn('No bootstrap.js found, running with empty registries:', e.message);
 }
 
-// Setup retro TV post-processing if episode provides it
-let retroEffect = null;
-if (window.setupRetroPostProcess) {
-  retroEffect = window.setupRetroPostProcess(renderer);
-}
+const storyboard = new Storyboard(renderer, camera, null, null);
 
-const storyboard = new Storyboard(renderer, camera, null, retroEffect);
+// Auto-attach registered post-processing effects from PostProcessRegistry
+// Episode bootstrap can register effects via registerPostProcess()
+for (const [name, EffectClass] of Object.entries(PostProcessRegistry)) {
+  try {
+    const effect = new EffectClass(renderer, width, height);
+    storyboard.addPostProcess(effect);
+    console.log(`[PostProcess] Attached: ${name}`);
+  } catch (e) {
+    console.warn(`[PostProcess] Failed to attach ${name}:`, e.message);
+  }
+}
 const fadeDiv = document.getElementById('fade');
 
 async function renderFrames() {
@@ -93,8 +100,8 @@ async function renderFrames() {
     storyboard.render();
 
     // Update post-processing time
-    if (retroEffect) {
-      retroEffect.update(1 / fps);
+    for (const effect of storyboard.postProcesses) {
+      if (effect.update) effect.update(1 / fps);
     }
 
     // Apply fade overlay

@@ -34,3 +34,9 @@ export { ProjectileSystem } from './lib/ProjectileSystem.js';
 
 // Transition system
 export { TransitionBase, TransitionRegistry, registerTransition } from './transitions/index.js';
+
+// Post-processing system
+export { PostProcessBase, PostProcessRegistry, registerPostProcess } from './postprocessing/index.js';
+
+// Reusable light effect components
+export { GlowEffect, AuraEffect } from './effects/index.js';

@@ -39,6 +39,8 @@ export class CharacterBase {
     // Generic effect groups that animations can spawn/modify
     this.effectGroups = {};     // named effect groups: { hitSpark, aura, shockwave, ... }
     this.particleEmitters = {}; // particle systems for trail / burst effects
+    // Reusable light effect components (GlowEffect, AuraEffect, etc.)
+    this.lightEffects = {};     // { name: effectInstance }
     this.baseY = 0;
     this.isSpeaking = false;
     this.speakStartTime = 0;
@@ -389,6 +391,50 @@ export class CharacterBase {
   }
 
   /**
+   * Add a reusable light effect component (GlowEffect, AuraEffect, etc.)
+   * to this character. The effect will be automatically updated each frame.
+   *
+   * @param {string} name — unique identifier for this effect
+   * @param {GlowEffect|AuraEffect} effect — effect instance
+   * @param {THREE.Object3D} parent — parent object to attach the effect mesh/group to
+   */
+  addLightEffect(name, effect, parent = null) {
+    this.lightEffects[name] = effect;
+    if (parent && effect.mesh) {
+      parent.add(effect.mesh);
+    } else if (parent && effect.group) {
+      parent.add(effect.group);
+    }
+  }
+
+  /**
+   * Get a light effect by name.
+   */
+  getLightEffect(name) {
+    return this.lightEffects[name];
+  }
+
+  /**
+   * Remove and dispose a light effect.
+   */
+  removeLightEffect(name) {
+    const effect = this.lightEffects[name];
+    if (effect) {
+      if (effect.dispose) effect.dispose();
+      delete this.lightEffects[name];
+    }
+  }
+
+  /**
+   * Update all light effects. Call this in subclass update() or let Storyboard call it.
+   */
+  updateLightEffects(time, delta) {
+    for (const effect of Object.values(this.lightEffects)) {
+      if (effect.update) effect.update(time, delta);
+    }
+  }
+
+  /**
    * Capture base positions/rotations/scales for all facial features
    * so that expression animations can modify them deterministically
    * and FaceReset can truly restore them.
@@ -554,5 +600,13 @@ export class CharacterBase {
     }
 
     this._faceBaseState = state;
+  }
+
+  dispose() {
+    // Dispose light effects
+    for (const effect of Object.values(this.lightEffects)) {
+      if (effect.dispose) effect.dispose();
+    }
+    this.lightEffects = {};
   }
 }

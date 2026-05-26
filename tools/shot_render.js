@@ -1,5 +1,5 @@
 import * as THREE from 'three';
-import { Storyboard } from 'dula-engine';
+import { Storyboard, PostProcessRegistry } from 'dula-engine';
 
 const width = 1920;
 const height = 1080;
@@ -15,9 +15,6 @@ document.body.appendChild(renderer.domElement);
 const camera = new THREE.PerspectiveCamera(45, width / height, 0.1, 1000);
 camera.position.set(0, 3, 10);
 camera.lookAt(0, 1.5, 0);
-
-// Setup retro TV post-processing if episode provides it
-let retroEffect = null;
 
 const storyboard = new Storyboard(renderer, camera);
 
@@ -43,11 +40,15 @@ async function init() {
 
 window.renderShot = async (startTime, endTime, shotFps) => {
   // Initialize post-processing after bootstrap is loaded
-  if (!retroEffect && window.setupRetroPostProcess) {
-    retroEffect = window.setupRetroPostProcess(renderer);
-  }
-  if (retroEffect) {
-    storyboard.outlineEffect = retroEffect;
+  if (storyboard.postProcesses.length === 0) {
+    for (const [name, EffectClass] of Object.entries(PostProcessRegistry)) {
+      try {
+        const effect = new EffectClass(renderer, width, height);
+        storyboard.addPostProcess(effect);
+      } catch (e) {
+        console.warn(`[PostProcess] Failed to attach ${name}:`, e.message);
+      }
+    }
   }
 
   const totalFrames = Math.ceil((endTime - startTime) * shotFps);
@@ -55,8 +56,8 @@ window.renderShot = async (startTime, endTime, shotFps) => {
     const t = startTime + i / shotFps;
     storyboard.update(t);
     storyboard.render();
-    if (retroEffect) {
-      retroEffect.update(1 / shotFps);
+    for (const effect of storyboard.postProcesses) {
+      if (effect.update) effect.update(1 / shotFps);
     }
     const dataUrl = renderer.domElement.toDataURL('image/png');
     const base64 = dataUrl.split(',')[1];
