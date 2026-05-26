@@ -78,6 +78,7 @@ const reports = [
   runAnimationInspector(entries, absEpisodeDir),
   runAVSyncInspector(entries, audioDir, outputDir),
   runNarrativeConsistencyInspector(entries, absEpisodeDir),
+  runCombatTraceInspector(entries, storyText),
 ];
 
 // Output report
@@ -783,6 +784,196 @@ function runNarrativeConsistencyInspector(entries, episodeDir) {
   }
 
   return makeReport('NarrativeConsistencyInspector', issues);
+}
+
+// ───────────────────────────────────────────────
+// Combat Trace Inspector
+// ───────────────────────────────────────────────
+function runCombatTraceInspector(entries, storyText) {
+  const issues = [];
+
+  // 1. Combat tag syntax check
+  const combatRegex = /\{Combat:([^}|]+)(?:\|([^}]*))?\}/g;
+  const validActions = new Set([
+    'Setup', 'Attack', 'Combo', 'Block', 'Dodge', 'Counter',
+    'Hit', 'Stagger', 'Knockdown', 'GetUp', 'Projectile',
+  ]);
+  let match;
+  while ((match = combatRegex.exec(storyText)) !== null) {
+    const action = match[1].trim();
+    const params = match[2] || '';
+    const line = storyText.substring(0, match.index).split('\n').length;
+
+    if (!validActions.has(action)) {
+      issues.push({
+        severity: 'warning',
+        message: `Unknown combat action "${action}" at line ${line}. Valid: ${Array.from(validActions).join(', ')}`,
+        fix: 'Use a valid combat action',
+        code: 'COMBAT-001',
+      });
+    }
+    if (action === 'Attack' && !params.includes('target=')) {
+      issues.push({
+        severity: 'error',
+        message: `{Combat:Attack} missing "target" parameter at line ${line}`,
+        fix: 'Add target like {Combat:Attack|target=OpponentName|anim=Punch}',
+        code: 'COMBAT-002',
+      });
+    }
+  }
+
+  // 2. Attack-reaction pairing check
+  const attackAnims = new Set([
+    'Punch', 'Kick', 'Uppercut', 'ComboPunch', 'SpinKick', 'JumpAttack',
+    'SpiritSwordSwing', 'SpiritGunFire', 'UltraBeam',
+  ]);
+  const reactionAnims = new Set(['HitStagger', 'Knockdown', 'Block', 'Dodge']);
+
+  for (let i = 0; i < entries.length; i++) {
+    const entry = entries[i];
+    if (!entry.animations) continue;
+
+    for (const anim of entry.animations) {
+      if (!attackAnims.has(anim)) continue;
+
+      const windowEnd = entry.endTime + 0.5;
+      let foundReaction = false;
+      for (let j = i + 1; j < entries.length && entries[j].startTime <= windowEnd; j++) {
+        const other = entries[j];
+        if (other.character && other.character !== entry.character && other.animations) {
+          if (other.animations.some((a) => reactionAnims.has(a))) {
+            foundReaction = true;
+            break;
+          }
+        }
+      }
+
+      if (!foundReaction) {
+        issues.push({
+          severity: 'warning',
+          message: `${entry.character || 'Unknown'} uses ${anim} at ${entry.startTime.toFixed(2)}s but no reaction found within 0.5s`,
+          fix: 'Add a reaction animation (HitStagger/Knockdown/Block/Dodge) on the target character',
+          time: entry.startTime,
+          code: 'COMBAT-003',
+        });
+      }
+    }
+  }
+
+  // 3. Combo timing check
+  const combatAnims = new Set([
+    'Punch', 'Kick', 'Uppercut', 'ComboPunch', 'SpinKick', 'JumpAttack',
+    'DashForward', 'SpiritSwordSwing', 'SpiritGunFire',
+  ]);
+  const byChar = new Map();
+  for (const entry of entries) {
+    if (!entry.character || !entry.animations) continue;
+    const combatOnes = entry.animations.filter((a) => combatAnims.has(a));
+    if (combatOnes.length === 0) continue;
+
+    if (!byChar.has(entry.character)) byChar.set(entry.character, []);
+    byChar.get(entry.character).push({
+      time: entry.startTime,
+      end: entry.endTime,
+      anims: combatOnes,
+    });
+  }
+
+  for (const [charName, actions] of byChar) {
+    for (let i = 1; i < actions.length; i++) {
+      const prev = actions[i - 1];
+      const cur = actions[i];
+      const gap = cur.time - prev.end;
+
+      if (gap < 0) {
+        issues.push({
+          severity: 'error',
+          message: `${charName} has overlapping combat animations: ${prev.anims.join('/')} ends at ${prev.end.toFixed(2)}s but ${cur.anims.join('/')} starts at ${cur.time.toFixed(2)}s`,
+          fix: 'Separate combat animations by at least 0.1s',
+          time: cur.time,
+          code: 'COMBAT-004',
+        });
+      } else if (gap < 0.1) {
+        issues.push({
+          severity: 'warning',
+          message: `${charName} combat gap too short (${gap.toFixed(3)}s) between ${prev.anims.join('/')} and ${cur.anims.join('/')}`,
+          fix: 'Increase gap to at least 0.1s for readable animation',
+          time: cur.time,
+          code: 'COMBAT-005',
+        });
+      }
+    }
+  }
+
+  // 4. Combat scene position check
+  const allCombatChars = new Set();
+  for (const entry of entries) {
+    if (!entry.animations) continue;
+    const isCombat = entry.animations.some((a) =>
+      [...attackAnims, ...reactionAnims, 'SpiritSwordSwing', 'SpiritGunCharge'].includes(a)
+    );
+    if (isCombat && entry.character) allCombatChars.add(entry.character);
+  }
+
+  const sceneCombatChars = new Map();
+  let currentScene = null;
+  for (const entry of entries) {
+    if (entry.scene) currentScene = entry.scene;
+    if (entry.character && allCombatChars.has(entry.character)) {
+      if (!sceneCombatChars.has(currentScene)) sceneCombatChars.set(currentScene, new Set());
+      sceneCombatChars.get(currentScene).add(entry.character);
+    }
+  }
+
+  for (const [scene, chars] of sceneCombatChars) {
+    if (chars.size >= 2) {
+      // Check if Position tags exist for these characters
+      const positionRegex = /\{Position:([^|]+)\|/g;
+      const positionedChars = new Set();
+      let pm;
+      while ((pm = positionRegex.exec(storyText)) !== null) {
+        positionedChars.add(pm[1]);
+      }
+      const missing = [...chars].filter((c) => !positionedChars.has(c));
+      if (missing.length > 0) {
+        issues.push({
+          severity: 'warning',
+          message: `Combat scene "${scene}" has fighters without explicit positions: ${missing.join(', ')}. They may overlap at origin.`,
+          fix: 'Add {Position:CharName|x=...|z=...} tags to separate fighters',
+          code: 'COMBAT-006',
+        });
+      }
+    }
+  }
+
+  // 5. Cross-scene combat check
+  const charScenes = new Map();
+  currentScene = null;
+  for (const entry of entries) {
+    if (entry.scene) currentScene = entry.scene;
+    if (entry.character && allCombatChars.has(entry.character)) {
+      if (!charScenes.has(entry.character)) charScenes.set(entry.character, new Set());
+      charScenes.get(entry.character).add(currentScene);
+    }
+  }
+  const combatCharList = Array.from(allCombatChars);
+  for (let i = 0; i < combatCharList.length; i++) {
+    for (let j = i + 1; j < combatCharList.length; j++) {
+      const scenesA = charScenes.get(combatCharList[i]) || new Set();
+      const scenesB = charScenes.get(combatCharList[j]) || new Set();
+      const common = [...scenesA].filter((s) => scenesB.has(s));
+      if (common.length === 0) {
+        issues.push({
+          severity: 'info',
+          message: `${combatCharList[i]} and ${combatCharList[j]} have combat animations but never appear in the same scene`,
+          fix: 'Ensure both characters are in the same scene for combat',
+          code: 'COMBAT-007',
+        });
+      }
+    }
+  }
+
+  return makeReport('CombatTraceInspector', issues);
 }
 
 /**
