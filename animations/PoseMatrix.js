@@ -39,9 +39,10 @@ export class PoseMatrix {
     this.leftAnkle = null;
     this.mesh = null;
     // 面部表情（可选）
-    this.mouth = null;
-    this.eyebrows = null;
-    this.eyelids = null;
+    this.mouth = null;      // { sx, sy, sz, px, py, pz, rx, ry, rz }
+    this.eyebrows = null;   // { left: { py, pz, rz }, right: { py, pz, rz } }
+    this.eyelids = null;    // { left: { sy, visible }, right: { sy, visible } }
+    this.pupils = null;     // { left: { sx, sy, sz, px, py }, right: { sx, sy, sz, px, py } }
   }
 
   static zero() {
@@ -61,16 +62,44 @@ export class PoseMatrix {
       'leftShoulder', 'leftElbow', 'leftWrist',
       'rightHip', 'rightKnee', 'rightAnkle',
       'leftHip', 'leftKnee', 'leftAnkle',
-      'mesh', 'mouth', 'eyebrows', 'eyelids',
+      'mesh', 'mouth', 'eyebrows', 'eyelids', 'pupils',
     ];
     for (const joint of joints) {
       if (!a[joint] && !b[joint]) continue;
       result[joint] = {};
-      const keys = a[joint] ? Object.keys(a[joint]) : Object.keys(b[joint]);
+      const keys = new Set([
+        ...(a[joint] ? Object.keys(a[joint]) : []),
+        ...(b[joint] ? Object.keys(b[joint]) : []),
+      ]);
       for (const key of keys) {
-        const av = a[joint]?.[key] ?? 0;
-        const bv = b[joint]?.[key] ?? 0;
-        result[joint][key] = av + (bv - av) * t;
+        const av = a[joint]?.[key];
+        const bv = b[joint]?.[key];
+        const avType = typeof av;
+        const bvType = typeof bv;
+        // Handle nested objects (e.g. eyebrows.left, eyelids.left)
+        if ((avType === 'object' && av !== null) || (bvType === 'object' && bv !== null)) {
+          result[joint][key] = {};
+          const avObj = av && typeof av === 'object' && av !== null ? av : {};
+          const bvObj = bv && typeof bv === 'object' && bv !== null ? bv : {};
+          const nestedKeys = new Set([
+            ...Object.keys(avObj),
+            ...Object.keys(bvObj),
+          ]);
+          for (const nKey of nestedKeys) {
+            const nav = avObj[nKey] ?? 0;
+            const nbv = bvObj[nKey] ?? 0;
+            if (typeof nav === 'boolean' || typeof nbv === 'boolean') {
+              result[joint][key][nKey] = t >= 0.5 ? nbv : nav;
+            } else {
+              result[joint][key][nKey] = nav + (nbv - nav) * t;
+            }
+          }
+        } else if (avType === 'boolean' || bvType === 'boolean') {
+          // For booleans (like visible), use b's value when t >= 0.5
+          result[joint][key] = t >= 0.5 ? (bv ?? false) : (av ?? false);
+        } else {
+          result[joint][key] = (av ?? 0) + ((bv ?? 0) - (av ?? 0)) * t;
+        }
       }
     }
     return result;
@@ -83,7 +112,7 @@ export class PoseMatrix {
       'leftShoulder', 'leftElbow', 'leftWrist',
       'rightHip', 'rightKnee', 'rightAnkle',
       'leftHip', 'leftKnee', 'leftAnkle',
-      'mesh', 'mouth', 'eyebrows', 'eyelids',
+      'mesh', 'mouth', 'eyebrows', 'eyelids', 'pupils',
     ];
     for (const joint of joints) {
       if (!a[joint] && !b[joint]) continue;
@@ -93,7 +122,24 @@ export class PoseMatrix {
         ...(b[joint] ? Object.keys(b[joint]) : []),
       ]);
       for (const key of keys) {
-        result[joint][key] = (a[joint]?.[key] ?? 0) + (b[joint]?.[key] ?? 0);
+        const av = a[joint]?.[key];
+        const bv = b[joint]?.[key];
+        const avType = typeof av;
+        const bvType = typeof bv;
+        // Handle nested objects
+        if ((avType === 'object' && av !== null) || (bvType === 'object' && bv !== null)) {
+          result[joint][key] = {};
+          const avObj = av && typeof av === 'object' && av !== null ? av : {};
+          const bvObj = bv && typeof bv === 'object' && bv !== null ? bv : {};
+          const nestedKeys = new Set([...Object.keys(avObj), ...Object.keys(bvObj)]);
+          for (const nKey of nestedKeys) {
+            const nav = avObj[nKey] ?? 0;
+            const nbv = bvObj[nKey] ?? 0;
+            result[joint][key][nKey] = nav + nbv;
+          }
+        } else {
+          result[joint][key] = (av ?? 0) + (bv ?? 0);
+        }
       }
     }
     return result;
@@ -106,13 +152,21 @@ export class PoseMatrix {
       'leftShoulder', 'leftElbow', 'leftWrist',
       'rightHip', 'rightKnee', 'rightAnkle',
       'leftHip', 'leftKnee', 'leftAnkle',
-      'mesh', 'mouth', 'eyebrows', 'eyelids',
+      'mesh', 'mouth', 'eyebrows', 'eyelids', 'pupils',
     ];
     for (const joint of joints) {
       if (!pose[joint]) continue;
       result[joint] = {};
       for (const key of Object.keys(pose[joint])) {
-        result[joint][key] = pose[joint][key] * s;
+        const val = pose[joint][key];
+        if (typeof val === 'object' && val !== null) {
+          result[joint][key] = {};
+          for (const nKey of Object.keys(val)) {
+            result[joint][key][nKey] = val[nKey] * s;
+          }
+        } else {
+          result[joint][key] = val * s;
+        }
       }
     }
     return result;
@@ -124,7 +178,7 @@ export class PoseMatrix {
       'leftShoulder', 'leftElbow', 'leftWrist',
       'rightHip', 'rightKnee', 'rightAnkle',
       'leftHip', 'leftKnee', 'leftAnkle',
-      'mesh', 'mouth', 'eyebrows', 'eyelids',
+      'mesh', 'mouth', 'eyebrows', 'eyelids', 'pupils',
     ];
     return joints.every(j => !this[j]);
   }
@@ -136,7 +190,7 @@ export class PoseMatrix {
       'leftShoulder', 'leftElbow', 'leftWrist',
       'rightHip', 'rightKnee', 'rightAnkle',
       'leftHip', 'leftKnee', 'leftAnkle',
-      'mesh', 'mouth', 'eyebrows', 'eyelids',
+      'mesh', 'mouth', 'eyebrows', 'eyelids', 'pupils',
     ];
     for (const joint of joints) {
       if (this[joint]) {

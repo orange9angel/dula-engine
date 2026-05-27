@@ -35,6 +35,7 @@ export class ActionMatrixController {
     this._matrixAnims = [];
     this._baselinePose = null;
     this._lastAppliedPose = PoseMatrix.zero();
+    this._faceBaseState = null;
   }
 
   captureBaseline() {
@@ -63,6 +64,16 @@ export class ActionMatrixController {
         rx: c.mesh.rotation.x, ry: c.mesh.rotation.y, rz: c.mesh.rotation.z,
       };
     }
+
+    // Capture facial feature baselines
+    this._faceBaseState = {};
+    if (c.leftEyebrow) this._faceBaseState.leftEyebrow = { y: c.leftEyebrow.position.y, z: c.leftEyebrow.position.z, rz: c.leftEyebrow.rotation.z };
+    if (c.rightEyebrow) this._faceBaseState.rightEyebrow = { y: c.rightEyebrow.position.y, z: c.rightEyebrow.position.z, rz: c.rightEyebrow.rotation.z };
+    if (c.leftEyelid) this._faceBaseState.leftEyelid = { sy: c.leftEyelid.scale.y, visible: c.leftEyelid.visible };
+    if (c.rightEyelid) this._faceBaseState.rightEyelid = { sy: c.rightEyelid.scale.y, visible: c.rightEyelid.visible };
+    if (c.leftPupil) this._faceBaseState.leftPupil = { sx: c.leftPupil.scale.x, sy: c.leftPupil.scale.y, sz: c.leftPupil.scale.z, x: c.leftPupil.position.x, y: c.leftPupil.position.y };
+    if (c.rightPupil) this._faceBaseState.rightPupil = { sx: c.rightPupil.scale.x, sy: c.rightPupil.scale.y, sz: c.rightPupil.scale.z, x: c.rightPupil.position.x, y: c.rightPupil.position.y };
+    if (c.mouth) this._faceBaseState.mouth = { sx: c.mouth.scale.x, sy: c.mouth.scale.y, sz: c.mouth.scale.z, x: c.mouth.position.x, y: c.mouth.position.y, z: c.mouth.position.z, rx: c.mouth.rotation.x, ry: c.mouth.rotation.y, rz: c.mouth.rotation.z };
   }
 
   registerAnimation(config) {
@@ -186,11 +197,74 @@ export class ActionMatrixController {
       if (m.rz !== undefined) c.mesh.rotation.z = base.mesh.rz + m.rz;
     }
 
+    const faceBase = this._faceBaseState || {};
+
     if (pose.mouth && c.mouth) {
       const m = pose.mouth;
-      if (m.sx !== undefined) c.mouth.scale.x = (c.mouthBaseScaleX || 1) * (1 + m.sx);
-      if (m.sy !== undefined) c.mouth.scale.y = (c.mouthBaseScaleY || 1) * (1 + m.sy);
-      if (m.sz !== undefined) c.mouth.scale.z = (c.mouthBaseScaleZ || 1) * (1 + m.sz);
+      const baseM = faceBase.mouth || {};
+      if (m.sx !== undefined) c.mouth.scale.x = (baseM.sx || c.mouthBaseScaleX || 1) * (1 + m.sx);
+      if (m.sy !== undefined) c.mouth.scale.y = (baseM.sy || c.mouthBaseScaleY || 1) * (1 + m.sy);
+      if (m.sz !== undefined) c.mouth.scale.z = (baseM.sz || c.mouthBaseScaleZ || 1) * (1 + m.sz);
+      if (m.px !== undefined) c.mouth.position.x = (baseM.x || c.mouthBasePosX || c.mouth.position.x) + m.px;
+      if (m.py !== undefined) c.mouth.position.y = (baseM.y || c.mouthBasePosY || c.mouth.position.y) + m.py;
+      if (m.pz !== undefined) c.mouth.position.z = (baseM.z || c.mouthBasePosZ || c.mouth.position.z) + m.pz;
+      if (m.rx !== undefined) c.mouth.rotation.x = (baseM.rx || c.mouthBaseRotX || c.mouth.rotation.x) + m.rx;
+      if (m.ry !== undefined) c.mouth.rotation.y = (baseM.ry || c.mouthBaseRotY || c.mouth.rotation.y) + m.ry;
+      if (m.rz !== undefined) c.mouth.rotation.z = (baseM.rz || c.mouthBaseRotZ || c.mouth.rotation.z) + m.rz;
+    }
+
+    if (pose.eyebrows) {
+      const eb = pose.eyebrows;
+      if (c.leftEyebrow && eb.left) {
+        const le = eb.left;
+        const baseLE = faceBase.leftEyebrow || {};
+        if (le.py !== undefined) c.leftEyebrow.position.y = (baseLE.y || c.leftEyebrowBaseY || c.leftEyebrow.position.y) + le.py;
+        if (le.pz !== undefined) c.leftEyebrow.position.z = (baseLE.z || c.leftEyebrowBaseZ || c.leftEyebrow.position.z) + le.pz;
+        if (le.rz !== undefined) c.leftEyebrow.rotation.z = (baseLE.rz || c.leftEyebrowBaseRZ || c.leftEyebrow.rotation.z) + le.rz;
+      }
+      if (c.rightEyebrow && eb.right) {
+        const re = eb.right;
+        const baseRE = faceBase.rightEyebrow || {};
+        if (re.py !== undefined) c.rightEyebrow.position.y = (baseRE.y || c.rightEyebrowBaseY || c.rightEyebrow.position.y) + re.py;
+        if (re.pz !== undefined) c.rightEyebrow.position.z = (baseRE.z || c.rightEyebrowBaseZ || c.rightEyebrow.position.z) + re.pz;
+        if (re.rz !== undefined) c.rightEyebrow.rotation.z = (baseRE.rz || c.rightEyebrowBaseRZ || c.rightEyebrow.rotation.z) + re.rz;
+      }
+    }
+
+    if (pose.eyelids) {
+      if (c.leftEyelid && pose.eyelids.left) {
+        const el = pose.eyelids.left;
+        const baseEL = faceBase.leftEyelid || {};
+        if (el.visible !== undefined) c.leftEyelid.visible = el.visible;
+        if (el.sy !== undefined) c.leftEyelid.scale.y = (baseEL.sy || c.leftEyelidBaseSY || 1) * (1 + el.sy);
+      }
+      if (c.rightEyelid && pose.eyelids.right) {
+        const er = pose.eyelids.right;
+        const baseER = faceBase.rightEyelid || {};
+        if (er.visible !== undefined) c.rightEyelid.visible = er.visible;
+        if (er.sy !== undefined) c.rightEyelid.scale.y = (baseER.sy || c.rightEyelidBaseSY || 1) * (1 + er.sy);
+      }
+    }
+
+    if (pose.pupils) {
+      if (c.leftPupil && pose.pupils.left) {
+        const pl = pose.pupils.left;
+        const basePL = faceBase.leftPupil || {};
+        if (pl.sx !== undefined) c.leftPupil.scale.x = (basePL.sx || c.leftPupilBaseSX || 1) * (1 + pl.sx);
+        if (pl.sy !== undefined) c.leftPupil.scale.y = (basePL.sy || c.leftPupilBaseSY || 1) * (1 + pl.sy);
+        if (pl.sz !== undefined) c.leftPupil.scale.z = (basePL.sz || c.leftPupilBaseSZ || 1) * (1 + pl.sz);
+        if (pl.px !== undefined) c.leftPupil.position.x = (basePL.x || c.leftPupilBaseX || c.leftPupil.position.x) + pl.px;
+        if (pl.py !== undefined) c.leftPupil.position.y = (basePL.y || c.leftPupilBaseY || c.leftPupil.position.y) + pl.py;
+      }
+      if (c.rightPupil && pose.pupils.right) {
+        const pr = pose.pupils.right;
+        const basePR = faceBase.rightPupil || {};
+        if (pr.sx !== undefined) c.rightPupil.scale.x = (basePR.sx || c.rightPupilBaseSX || 1) * (1 + pr.sx);
+        if (pr.sy !== undefined) c.rightPupil.scale.y = (basePR.sy || c.rightPupilBaseSY || 1) * (1 + pr.sy);
+        if (pr.sz !== undefined) c.rightPupil.scale.z = (basePR.sz || c.rightPupilBaseSZ || 1) * (1 + pr.sz);
+        if (pr.px !== undefined) c.rightPupil.position.x = (basePR.x || c.rightPupilBaseX || c.rightPupil.position.x) + pr.px;
+        if (pr.py !== undefined) c.rightPupil.position.y = (basePR.y || c.rightPupilBaseY || c.rightPupil.position.y) + pr.py;
+      }
     }
   }
 
