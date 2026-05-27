@@ -385,11 +385,16 @@ export class CharacterBase {
     }
 
     // Ensure character mesh stays upright (prevent lookAt from flipping)
-    if (this.mesh && Math.abs(this.mesh.rotation.x) > 0.01) {
-      this.mesh.rotation.x = 0;
-    }
-    if (this.mesh && Math.abs(this.mesh.rotation.z) > 0.01) {
-      this.mesh.rotation.z = 0;
+    // BUT: skip if matrix animation is controlling body rotation (rx/rz)
+    const matrixControllingBodyRot = hasActiveMatrixAnims && this._actionMatrix?.currentPose?.mesh &&
+      (this._actionMatrix.currentPose.mesh.rx !== undefined || this._actionMatrix.currentPose.mesh.rz !== undefined);
+    if (!matrixControllingBodyRot) {
+      if (this.mesh && Math.abs(this.mesh.rotation.x) > 0.01) {
+        this.mesh.rotation.x = 0;
+      }
+      if (this.mesh && Math.abs(this.mesh.rotation.z) > 0.01) {
+        this.mesh.rotation.z = 0;
+      }
     }
   }
 
