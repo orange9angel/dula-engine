@@ -24,6 +24,7 @@ export { SpeakingAnimationInspector } from './SpeakingAnimationInspector.js';
 export { NarrativeLogicInspector } from './NarrativeLogicInspector.js';
 export { AnimationCompatibilityInspector } from './AnimationCompatibilityInspector.js';
 export { CombatTraceInspector } from './CombatTraceInspector.js';
+export { TimelineTraceInspector } from './TimelineTraceInspector.js';
 
 // Import locally for getAllInspectors to avoid TDZ
 import { SceneInspector as _SceneInspector } from './SceneInspector.js';
@@ -45,6 +46,7 @@ import { SpeakingAnimationInspector as _SpeakingAnimationInspector } from './Spe
 import { NarrativeLogicInspector as _NarrativeLogicInspector } from './NarrativeLogicInspector.js';
 import { AnimationCompatibilityInspector as _AnimationCompatibilityInspector } from './AnimationCompatibilityInspector.js';
 import { CombatTraceInspector as _CombatTraceInspector } from './CombatTraceInspector.js';
+import { TimelineTraceInspector as _TimelineTraceInspector } from './TimelineTraceInspector.js';
 
 /**
  * 获取所有 inspector 实例
@@ -71,5 +73,6 @@ export function getAllInspectors() {
     new _NarrativeLogicInspector(),
     new _AnimationCompatibilityInspector(),
     new _CombatTraceInspector(),
+    new _TimelineTraceInspector(),
   ];
 }
