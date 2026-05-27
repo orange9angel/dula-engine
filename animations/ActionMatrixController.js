@@ -277,19 +277,13 @@ export class ActionMatrixController {
     const idlePose = PoseMatrix.lerp(this._lastAppliedPose, PoseMatrix.zero(), returnSpeed);
 
     // Subtle breathing — vertical only, no horizontal sway
-    // This avoids conflicting with combat animations that use mesh.x/y for movement
-    const breath = Math.sin(time * 2.0) * 0.012;
+    // This avoids conflicting with combat animations and facing direction
+    const breath = Math.sin(time * 2.0) * 0.008;
 
     idlePose.mesh = { ...idlePose.mesh, y: breath };
-    idlePose.headGroup = { ...idlePose.headGroup, rx: Math.sin(time * 1.5) * 0.006 };
+    idlePose.headGroup = { ...idlePose.headGroup, rx: Math.sin(time * 1.5) * 0.005 };
 
-    // Minimal arm idle — barely noticeable, won't fight with action poses
-    if (c.rightArm) {
-      idlePose.rightShoulder = { ...idlePose.rightShoulder, rz: (c.rightArmBaseZ || 0) + Math.sin(time * 1.5) * 0.015 };
-    }
-    if (c.leftArm) {
-      idlePose.leftShoulder = { ...idlePose.leftShoulder, rz: (c.leftArmBaseZ || 0) - Math.sin(time * 1.5) * 0.015 };
-    }
+    // No arm idle — let the last action pose or combat stance hold naturally
 
     this._applyPose(idlePose);
     this._lastAppliedPose = idlePose.clone();

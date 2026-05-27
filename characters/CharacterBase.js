@@ -334,6 +334,10 @@ export class CharacterBase {
       this._updateIdle(time);
     }
 
+    const matrixControlledMesh = hasActiveMatrixAnims ? this._actionMatrix?.currentPose?.mesh : null;
+    const matrixControllingBodyRot = !!matrixControlledMesh &&
+      (matrixControlledMesh.rx !== undefined || matrixControlledMesh.ry !== undefined || matrixControlledMesh.rz !== undefined);
+
     // Position moves
     for (const move of this.moves) {
       if (time >= move.startTime && time < move.endTime) {
@@ -359,7 +363,15 @@ export class CharacterBase {
         const dx = move.targetPos.x - this.mesh.position.x;
         const dz = move.targetPos.z - this.mesh.position.z;
         if (Math.abs(dx) > 0.001 || Math.abs(dz) > 0.001) {
+          const preservedRot = matrixControllingBodyRot
+            ? { x: this.mesh.rotation.x, y: this.mesh.rotation.y, z: this.mesh.rotation.z }
+            : null;
           this.mesh.lookAt(this.mesh.position.x + dx, this.mesh.position.y, this.mesh.position.z + dz);
+          if (preservedRot) {
+            if (matrixControlledMesh.rx !== undefined) this.mesh.rotation.x = preservedRot.x;
+            if (matrixControlledMesh.ry !== undefined) this.mesh.rotation.y = preservedRot.y;
+            if (matrixControlledMesh.rz !== undefined) this.mesh.rotation.z = preservedRot.z;
+          }
         }
       } else if (time >= move.endTime && !move.completed) {
         // Ensure character reaches target position even if update jumps past endTime
@@ -370,8 +382,12 @@ export class CharacterBase {
           this.baseY = move.targetPos.y;
         }
         // Reset pitch rotation after movement (keep only yaw from facing direction)
-        this.mesh.rotation.x = 0;
-        this.mesh.rotation.z = 0;
+        if (!matrixControlledMesh || matrixControlledMesh.rx === undefined) {
+          this.mesh.rotation.x = 0;
+        }
+        if (!matrixControlledMesh || matrixControlledMesh.rz === undefined) {
+          this.mesh.rotation.z = 0;
+        }
         move.completed = true;
       }
     }
@@ -386,8 +402,6 @@ export class CharacterBase {
 
     // Ensure character mesh stays upright (prevent lookAt from flipping)
     // BUT: skip if matrix animation is controlling body rotation (rx/rz)
-    const matrixControllingBodyRot = hasActiveMatrixAnims && this._actionMatrix?.currentPose?.mesh &&
-      (this._actionMatrix.currentPose.mesh.rx !== undefined || this._actionMatrix.currentPose.mesh.rz !== undefined);
     if (!matrixControllingBodyRot) {
       if (this.mesh && Math.abs(this.mesh.rotation.x) > 0.01) {
         this.mesh.rotation.x = 0;
@@ -440,9 +454,9 @@ export class CharacterBase {
 
   animateBody(time, delta) {
     if (!this.headGroup) return;
-    // Gentle nodding and slight sway while speaking
-    this.headGroup.rotation.x = Math.sin(time * 10) * 0.05;
-    this.headGroup.rotation.y = Math.sin(time * 5) * 0.03;
+    // Subtle nodding while speaking — no horizontal sway
+    // Reduced amplitude and frequency for natural feel
+    this.headGroup.rotation.x = Math.sin(time * 6) * 0.025;
   }
 
   setPosition(x, y, z) {
@@ -604,22 +618,17 @@ export class CharacterBase {
   }
 
   _updateIdle(time) {
-    // Subtle breathing sway when no animation is active
+    // Subtle breathing when no animation is active
+    // Vertical only — no horizontal sway to avoid conflicting with combat poses
     if (!this._idleStartTime) this._idleStartTime = time;
     const idleT = time - this._idleStartTime;
-    const breath = Math.sin(idleT * 2.5) * 0.015;
+    const breath = Math.sin(idleT * 2.0) * 0.008;
     if (this.mesh) {
       this.mesh.position.y = this.baseY + breath;
     }
     if (this.headGroup) {
-      this.headGroup.rotation.x = Math.sin(idleT * 1.8) * 0.01;
-      this.headGroup.rotation.y = Math.sin(idleT * 1.2) * 0.008;
-    }
-    if (this.rightArm) {
-      this.rightArm.rotation.z = (this.rightArmBaseZ || 0) + Math.sin(idleT * 2.0) * 0.02;
-    }
-    if (this.leftArm) {
-      this.leftArm.rotation.z = (this.leftArmBaseZ || 0) - Math.sin(idleT * 2.0) * 0.02;
+      // Minimal head movement — barely perceptible
+      this.headGroup.rotation.x = Math.sin(idleT * 1.5) * 0.005;
     }
   }
 

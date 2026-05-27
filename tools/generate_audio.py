@@ -230,6 +230,7 @@ def parse_story(text):
         dialogue = re.sub(r"\{Music:[^}]+\}\s*", "", dialogue)
         dialogue = re.sub(r"\{Voice:[^}]+\}\s*", "", dialogue)
         dialogue = re.sub(r"\{[A-Za-z]\w*:[^}]+\}\s*", "", dialogue)
+        dialogue = re.sub(r"\{Hitstop\|[^}]+\}\s*", "", dialogue)
         dialogue = re.sub(r"\{(?!Camera:)\w+\}\s*", "", dialogue).strip()
 
         # Parse all event tags from content
@@ -563,6 +564,12 @@ def schedule_sfx_from_events(story_events, manual_sfx):
 
     # Helper: find best matching SFX by keyword (prefer longer/more specific names)
     def find_sfx(*keywords):
+        names_by_lower = {name.lower(): path for name, path in manual_sfx.items()}
+        for kw in keywords:
+            exact = names_by_lower.get(kw.lower())
+            if exact:
+                return exact
+
         candidates = []
         for kw in keywords:
             for name, path in manual_sfx.items():
@@ -646,8 +653,16 @@ def schedule_sfx_from_events(story_events, manual_sfx):
                 sfx_file = find_sfx("punch_hit", "punch", "hit")
                 if sfx_file:
                     scheduled.append({"file": sfx_file, "startTime": t})
+            elif "ArcadeSpinKick" in body:
+                sfx_file = find_sfx("spin_kick_impact", "kick_impact", "kick")
+                if sfx_file:
+                    scheduled.append({"file": sfx_file, "startTime": t})
             elif "Kick" in body or "SpinKick" in body:
                 sfx_file = find_sfx("kick_impact", "kick")
+                if sfx_file:
+                    scheduled.append({"file": sfx_file, "startTime": t})
+            elif "BoxerGuardHop" in body:
+                sfx_file = find_sfx("guard_hop", "dash_whoosh", "whoosh")
                 if sfx_file:
                     scheduled.append({"file": sfx_file, "startTime": t})
             elif "SpiritSwordSwing" in body:
@@ -943,7 +958,7 @@ def mix_audio(manifest, bgm_path=None, sfx_events=None):
         label = "dialogue" if i == 0 and dialogue_path else ("bgm" if i == (1 if dialogue_path else 0) and bgm_path else "sfx")
         amix_inputs += f"[{label}{i}]"
 
-    amix = f"{amix_inputs}amix=inputs={stream_idx}:duration=longest:normalize=0[outa];[outa]alimiter=level_in=1.0:level_out=1.0:limit=0.95[limited]"
+    amix = f"{amix_inputs}amix=inputs={stream_idx}:duration=longest:normalize=0[outa];[outa]alimiter=level_in=1.0:level_out=1.0:limit=0.95,volume=0.89[limited]"
     filter_complex = ";".join(final_filters + [amix])
 
     cmd = f'ffmpeg -y {" ".join(final_inputs)} -filter_complex "{filter_complex}" -map "[limited]" -acodec pcm_s16le -ar 48000 "{mixed_path}"'

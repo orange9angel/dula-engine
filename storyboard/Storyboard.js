@@ -185,7 +185,7 @@ export class Storyboard {
     // Initialize first scene if specified
     const firstSceneEntry = this.entries.find((e) => e.scene);
     const initialSceneName = firstSceneEntry ? firstSceneEntry.scene : 'RoomScene';
-    this.switchScene(initialSceneName);
+    this.switchScene(initialSceneName, false, 0);
 
     // Precompute which characters appear in which scenes
     this.characterScenes = new Map();
@@ -229,8 +229,9 @@ export class Storyboard {
 
     // Apply story placements for initial scene (before arrangeCharacters)
     // Only apply placements belonging to the current scene
-    const currentPlacements = this.storyPlacements?.filter(p => p.scene === initialSceneName) || [];
-    // First pass: set all positions
+    // Note: switchScene already applied placements with currentTime=0, so we skip duplicates here
+    const currentPlacements = this.storyPlacements?.filter(p => p.scene === initialSceneName && (p.startTime === undefined || p.startTime <= 0)) || [];
+    // First pass: set all positions (only for characters not already positioned by switchScene)
     for (const p of currentPlacements) {
       const char = this.characters.get(p.character);
       if (!char) continue;
@@ -293,12 +294,14 @@ export class Storyboard {
     // Queue animations from SRT entries
     const LOOPING_ANIMATIONS = new Set([
       'SwayBody', 'Walk', 'Run', 'Swim', 'Tremble', 'FlailArms',
-      'FXEnergyAura', 'FightingStance',
+      'FXEnergyAura', 'FightingStance', 'CounterStance',
     ]);
     const ONE_SHOT_BODY_ANIMS = new Set([
-      'Punch', 'ComboPunch', 'Kick', 'SpinKick', 'Uppercut',
+      'Punch', 'ComboPunch', 'Kick', 'SpinKick', 'ArcadeSpinKick', 'JumpFlyingKick', 'Uppercut',
+      'AirTatsumaki',
+      'WeaveStep', 'HurricaneKick', 'DragonPunch', 'BackFist', 'SweepKick', 'KneeStrike',
       'SpiritSwordSwing', 'SpiritGunFire', 'SpiritGunCharge', 'SpiritSwordDraw',
-      'JumpAttack', 'DashForward', 'Dodge', 'Block', 'HitStagger',
+      'JumpAttack', 'DashForward', 'Dodge', 'BoxerGuardHop', 'Block', 'HitStagger',
       'Knockdown', 'GetUp', 'PointForward', 'CrossArms', 'Nod',
       'Shrug', 'LookAround', 'Celebrate', 'WaveHand', 'TurnToCamera',
     ]);
@@ -349,7 +352,7 @@ export class Storyboard {
     }
 
     // Auto-detect hit pairs and store hitstop data for runtime triggering
-    const ATTACK_ANIMATIONS = ['Punch', 'SpiritSwordSwing', 'SpiritGunFire', 'ComboPunch', 'Kick'];
+    const ATTACK_ANIMATIONS = ['Punch', 'SpiritSwordSwing', 'SpiritGunFire', 'ComboPunch', 'Kick', 'SpinKick', 'ArcadeSpinKick', 'JumpFlyingKick', 'HurricaneKick', 'AirTatsumaki', 'DragonPunch', 'BackFist', 'SweepKick', 'KneeStrike'];
     const REACTION_ANIMATIONS = ['HitStagger', 'Block'];
     for (let i = 0; i < this.entries.length - 1; i++) {
       const entry = this.entries[i];
@@ -370,7 +373,8 @@ export class Storyboard {
       if (entry.hitstop) {
         const duration = entry.hitstop.options.duration ?? 0.1;
         const shake = entry.hitstop.options.shake ?? 0.3;
-        entry._explicitHitstop = { time: entry.startTime, duration, shake };
+        const offset = entry.hitstop.options.offset ?? 0;
+        entry._explicitHitstop = { time: entry.startTime + offset, duration, shake };
       }
     }
 
@@ -819,8 +823,10 @@ export class Storyboard {
 
   arrangeCharacters() {
     const chars = Array.from(this.characters.values());
-    // Only consider placements for the current scene
-    const scenePlacements = this.storyPlacements?.filter(p => p.scene === this.currentSceneName) || [];
+    // Only consider placements for the current scene that have already started
+    // Use current scene time if available, otherwise allow all (backward compat)
+    const now = this._currentUpdateTime !== undefined ? this._currentUpdateTime : 0;
+    const scenePlacements = this.storyPlacements?.filter(p => p.scene === this.currentSceneName && (p.startTime === undefined || p.startTime <= now)) || [];
 
     // Check if CombatDirector has set up a battle line for any of these characters
     const hasCombatSetup = chars.some(char => char.userData?.inCombat);
@@ -924,6 +930,7 @@ export class Storyboard {
 
   update(forcedTime) {
     const t = forcedTime !== undefined ? forcedTime : this.getCurrentTime();
+    this._currentUpdateTime = t;
 
     // Hitstop: check if we are in a freeze frame
     const isHitstop = this.hitstopManager.update(t);
@@ -1480,21 +1487,29 @@ export class Storyboard {
 
   /**
    * Trigger visual effects synchronized with SFX events.
-   * When an SFX fires, create a brief visual pulse on the character.
+   * SFX tags are audio cues by default. Visual feedback should come from
+   * explicit FX tags or contact events; use visual=true for legacy pulses.
    */
   _updateSFXVisuals(t) {
     for (const entry of this.entries) {
       if (!entry.sfxEvents || entry.sfxEvents.length === 0) continue;
       for (const sfx of entry.sfxEvents) {
+        const wantsVisual = sfx.options.visual === true ||
+          sfx.options.visual === 'true' ||
+          sfx.options.visual === 1 ||
+          sfx.options.visual === '1';
+        if (!wantsVisual) continue;
+
         const offset = sfx.options.offset || 0;
         const triggerTime = entry.startTime + offset;
         if (t >= triggerTime && t < triggerTime + 0.05) {
-          const key = `${entry.index}_${sfx.name}_${offset}`;
+          const targetName = sfx.options.target || entry.character;
+          const key = `${entry.index}_${sfx.name}_${offset}_${targetName}`;
           if (!this._sfxTriggered) this._sfxTriggered = new Set();
           if (this._sfxTriggered.has(key)) continue;
           this._sfxTriggered.add(key);
 
-          const char = this.characters.get(entry.character);
+          const char = this.characters.get(targetName);
           if (!char || !char.mesh) continue;
 
           // Visual pulse: brief bright flash on the character
@@ -1618,6 +1633,8 @@ export class Storyboard {
     }
 
     // Parse combat tags from entries（支持同一条目多个 Combat 标签）
+    // Only process Setup tags that start at or before time 0 for initial positioning
+    // Later Setup tags will be applied via update() when their startTime is reached
     for (const entry of this.entries) {
       const combatTags = entry.combatAll || (entry.combat ? [entry.combat] : []);
       if (combatTags.length === 0) continue;
@@ -1628,6 +1645,8 @@ export class Storyboard {
 
         switch (name) {
           case 'Setup': {
+            // Skip future combat setups — they will be applied when their time comes
+            if (startTime > 0) break;
             const charA = options.charA;
             const charB = options.charB;
             if (charA && charB) {
