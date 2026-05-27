@@ -155,7 +155,39 @@ if (format === 'html') {
   printConsoleReport(reports, crossAnalysis);
 }
 
+// Print trajectory and matrix visualizations (if available)
+printVisualizations(reports, absEpisodeDir);
+
 const totalErrors = reports.reduce((sum, r) => sum + r.summary.errors, 0);
+
+// ── Visualization Output ──
+function printVisualizations(reports, episodeDir) {
+  const trajectoryReport = reports.find(r => r.inspector === 'StoryTrajectoryInspector');
+  const matrixReport = reports.find(r => r.inspector === 'ActionMatrixInspector');
+
+  if (trajectoryReport?.trajectoryText) {
+    console.log(chalk.cyan('\n═─ 文本故事轨迹图 ─═\n'));
+    console.log(trajectoryReport.trajectoryText);
+
+    // Also save to file
+    const trajPath = path.join(episodeDir, 'output', 'story_trajectory.txt');
+    fs.mkdirSync(path.dirname(trajPath), { recursive: true });
+    fs.writeFileSync(trajPath, trajectoryReport.trajectoryText, 'utf-8');
+    console.log(chalk.gray(`\n📄 轨迹图已保存: ${trajPath}`));
+  }
+
+  if (matrixReport?.matrixText) {
+    console.log(chalk.cyan('\n═─ 动作矩阵 ─═\n'));
+    console.log(matrixReport.matrixText);
+
+    // Also save to file
+    const matrixPath = path.join(episodeDir, 'output', 'action_matrix.txt');
+    fs.mkdirSync(path.dirname(matrixPath), { recursive: true });
+    fs.writeFileSync(matrixPath, matrixReport.matrixText, 'utf-8');
+    console.log(chalk.gray(`\n📄 动作矩阵已保存: ${matrixPath}`));
+  }
+}
+
 process.exit(totalErrors > 0 ? 1 : 0);
 
 // ───────────────────────────────────────────────

@@ -15,6 +15,7 @@ export { CharacterBase, CharacterRegistry, registerCharacter } from './character
 
 // Animation system
 export { AnimationBase, AnimationRegistry, registerAnimation } from './animations/index.js';
+export { PoseMatrix, ActionMatrixController, ActionPhase, PoseType, getPoseType, getDefaultPhase } from './animations/index.js';
 
 // Scene system
 export { SceneBase, SceneRegistry, registerScene } from './scenes/index.js';

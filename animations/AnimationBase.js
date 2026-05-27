@@ -10,6 +10,8 @@
  * @property {number} [maxHeight=Infinity] - Maximum character height
  */
 
+import { getPoseType, getDefaultPhase } from './PoseMatrix.js';
+
 export class AnimationBase {
   constructor(name, duration = 1.0) {
     this.name = name;
@@ -26,6 +28,30 @@ export class AnimationBase {
       minHeight: 0,
       maxHeight: Infinity,
     };
+
+    /**
+     * 是否使用姿势矩阵模式。
+     * - false（默认）：子类覆盖 update(t, character) 直接操作角色
+     * - true：子类覆盖 getPoseMatrix(t) 返回 PoseMatrix，由 ActionMatrixController 应用
+     *
+     * 迁移路径：
+     * 1. 旧动画保持 usePoseMatrix = false，继续用 update()
+     * 2. 新动画或迁移中的动画设置 usePoseMatrix = true，实现 getPoseMatrix()
+     * 3. 最终所有动画统一为矩阵模式，删除 update() 路径
+     */
+    this.usePoseMatrix = false;
+
+    // 矩阵模式下的姿势类型和阶段（自动推导）
+    this._poseType = getPoseType(name);
+    this._phase = getDefaultPhase(this._poseType);
+  }
+
+  get poseType() {
+    return this._poseType;
+  }
+
+  get phase() {
+    return this._phase;
   }
 
   /**
@@ -58,10 +84,21 @@ export class AnimationBase {
   }
 
   /**
+   * 旧接口：直接操作角色（usePoseMatrix = false 时使用）
    * @param {number} t - progress from 0 to 1
    * @param {CharacterBase} character
    */
   update(t, character) {
-    // override in subclass
+    // override in subclass when usePoseMatrix = false
+  }
+
+  /**
+   * 新接口：返回姿势矩阵（usePoseMatrix = true 时必须覆盖）
+   * @param {number} t - progress from 0 to 1
+   * @returns {PoseMatrix|null} 姿势矩阵（相对基线的偏移量）
+   */
+  getPoseMatrix(t) {
+    // override in subclass when usePoseMatrix = true
+    return null;
   }
 }

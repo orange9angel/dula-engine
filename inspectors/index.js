@@ -25,6 +25,8 @@ export { NarrativeLogicInspector } from './NarrativeLogicInspector.js';
 export { AnimationCompatibilityInspector } from './AnimationCompatibilityInspector.js';
 export { CombatTraceInspector } from './CombatTraceInspector.js';
 export { TimelineTraceInspector } from './TimelineTraceInspector.js';
+export { StoryTrajectoryInspector } from './StoryTrajectoryInspector.js';
+export { ActionMatrixInspector } from './ActionMatrixInspector.js';
 
 // Import locally for getAllInspectors to avoid TDZ
 import { SceneInspector as _SceneInspector } from './SceneInspector.js';
@@ -47,6 +49,8 @@ import { NarrativeLogicInspector as _NarrativeLogicInspector } from './Narrative
 import { AnimationCompatibilityInspector as _AnimationCompatibilityInspector } from './AnimationCompatibilityInspector.js';
 import { CombatTraceInspector as _CombatTraceInspector } from './CombatTraceInspector.js';
 import { TimelineTraceInspector as _TimelineTraceInspector } from './TimelineTraceInspector.js';
+import { StoryTrajectoryInspector as _StoryTrajectoryInspector } from './StoryTrajectoryInspector.js';
+import { ActionMatrixInspector as _ActionMatrixInspector } from './ActionMatrixInspector.js';
 
 /**
  * 获取所有 inspector 实例
@@ -74,5 +78,7 @@ export function getAllInspectors() {
     new _AnimationCompatibilityInspector(),
     new _CombatTraceInspector(),
     new _TimelineTraceInspector(),
+    new _StoryTrajectoryInspector(),
+    new _ActionMatrixInspector(),
   ];
 }

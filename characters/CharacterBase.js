@@ -1,4 +1,6 @@
 import * as THREE from 'three';
+import { ActionMatrixController } from '../animations/ActionMatrixController.js';
+import { RigAdapter } from '../rigging/RigAdapter.js';
 
 /**
  * Character archetype tags for animation compatibility.
@@ -20,10 +22,21 @@ export class CharacterBase {
     this.mouthBaseScaleY = 1;
     this.mouthBaseScaleZ = 1;
     this.headGroup = null;
-    this.rightArm = null;
-    this.leftArm = null;
-    this.rightLeg = null;
-    this.leftLeg = null;
+    this.rightArm = null;      // 右肩/上臂根Group
+    this.leftArm = null;       // 左肩/上臂根Group
+    this.rightLeg = null;      // 右髋/大腿根Group
+    this.leftLeg = null;       // 左髋/大腿根Group
+    // ── 13点关节控制（v3 动作矩阵系统）──
+    // 手臂：肩 → 肘 → 腕 → 手
+    this.rightElbow = null;    // 右肘关节Group（rightArm的子级）
+    this.rightWrist = null;    // 右手腕关节Group（rightElbow的子级）
+    this.leftElbow = null;     // 左肘关节Group
+    this.leftWrist = null;     // 左手腕关节Group
+    // 腿部：髋 → 膝 → 踝 → 脚
+    this.rightKnee = null;     // 右膝关节Group（rightLeg的子级）
+    this.rightAnkle = null;    // 右脚踝关节Group（rightKnee的子级）
+    this.leftKnee = null;      // 左膝关节Group
+    this.leftAnkle = null;     // 左脚踝关节Group
     this.leftPupil = null;
     this.rightPupil = null;
     // ── Facial expression system ──
@@ -62,6 +75,10 @@ export class CharacterBase {
       startTime: 0,
       endTime: 0,
     };
+    // ── Action Matrix Controller ──
+    // 运行时动作矩阵系统：动画通过矩阵描述姿势，由控制器统一应用
+    // 延迟初始化：在首次播放矩阵动画时创建，避免无矩阵动画的角色浪费资源
+    this._actionMatrix = null;
     /**
      * Archetype tags describing this character's body type and capabilities.
      * Used by animations to check compatibility.
@@ -71,6 +88,8 @@ export class CharacterBase {
      */
     this.archetypes = ['humanoid'];
     this.build();
+    // 自动适配关节层级（为旧角色创建 elbow/wrist/knee/ankle）
+    RigAdapter.adapt(this);
   }
 
   speak(startTime, duration) {
@@ -145,10 +164,29 @@ export class CharacterBase {
 
   playAnimation(AnimClass, startTime, duration) {
     const anim = new AnimClass();
+    const endTime = startTime + (duration !== undefined ? duration : anim.duration);
+
+    // 检测是否为矩阵动画（usePoseMatrix = true）
+    if (anim.usePoseMatrix) {
+      // 懒加载矩阵控制器
+      if (!this._actionMatrix) {
+        this._actionMatrix = new ActionMatrixController(this);
+      }
+      this._actionMatrix.registerAnimation({
+        name: anim.name,
+        poseType: anim.poseType || 'idle',
+        phase: anim.phase || 'neutral',
+        getPoseMatrix: (t) => anim.getPoseMatrix(t),
+        startTime,
+        endTime,
+      });
+    }
+
+    // 同时加入旧动画队列（保持兼容）
     this.animations.push({
       instance: anim,
       startTime,
-      endTime: startTime + (duration !== undefined ? duration : anim.duration),
+      endTime,
     });
   }
 
@@ -169,6 +207,9 @@ export class CharacterBase {
     this.animations = [];
     this.moves = [];
     this.teleportEvents = [];
+    if (this._actionMatrix) {
+      this._actionMatrix.clearAnimations();
+    }
   }
 
   update(time, delta) {
@@ -185,16 +226,29 @@ export class CharacterBase {
     // Eye / head tracking
     this.updateEyeTracking(time);
 
+    // ── Action Matrix System (v3) ──
+    // 优先使用矩阵控制器处理矩阵动画
+    const hasMatrixAnims = this._actionMatrix && this._actionMatrix._matrixAnims.length > 0;
+    const hasActiveMatrixAnims = hasMatrixAnims && this._actionMatrix._matrixAnims.some(
+      a => time >= a.startTime && time <= a.endTime
+    );
+
     // ── Animation blending system (v2) ──
     // Categorize active animations by priority
     const bodyAnims = [];
     const faceAnims = [];
     const fxAnims = [];
+    const matrixAnimNames = new Set();
     for (const anim of this.animations) {
       if (time >= anim.startTime && time <= anim.endTime) {
         const progress = (time - anim.startTime) / (anim.endTime - anim.startTime);
         const name = anim.instance.name;
         const item = { anim, progress, elapsed: time - anim.startTime, name };
+        // 矩阵动画由 ActionMatrixController 处理，旧动画仍走旧路径
+        if (anim.instance.usePoseMatrix) {
+          matrixAnimNames.add(name);
+          continue;
+        }
         if (name.startsWith('FX')) {
           fxAnims.push(item);
         } else if (name.startsWith('Face')) {
@@ -203,6 +257,11 @@ export class CharacterBase {
           bodyAnims.push(item);
         }
       }
+    }
+
+    // 如果有矩阵动画激活，先更新矩阵控制器
+    if (hasActiveMatrixAnims) {
+      this._actionMatrix.update(time, delta);
     }
 
     // Sort each group by start time (most recent first)
@@ -214,7 +273,7 @@ export class CharacterBase {
     const hasFX = fxAnims.length > 0;
 
     if (hasBody || hasFace || hasFX) {
-      // ── BODY ANIMATION ──
+      // ── BODY ANIMATION (旧系统，仅处理非矩阵动画) ──
       if (hasBody) {
         const primary = bodyAnims[0];
 
@@ -268,7 +327,7 @@ export class CharacterBase {
       for (const fx of fxAnims) {
         fx.anim.instance.update(fx.progress, this);
       }
-    } else {
+    } else if (!hasActiveMatrixAnims) {
       // No active animation — blend from last pose to idle
       this._lastBodyAnimId = null;
       this._poseSnapshot = null;
