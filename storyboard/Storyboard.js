@@ -161,6 +161,7 @@ export class Storyboard {
             y: ev.options.y,
             z: ev.options.z,
             action: ev.options.action,
+            target: ev.options.target,
           });
         }
       }
@@ -476,6 +477,20 @@ export class Storyboard {
         const AnimClass = AnimationRegistry[ev.action];
         if (AnimClass) {
           char.playAnimation(AnimClass, ev.startTime, ev.duration);
+        }
+      } else if (ev.type === 'face') {
+        const targetChar = this.characters.get(ev.target);
+        if (targetChar && targetChar.mesh) {
+          const dx = targetChar.mesh.position.x - char.mesh.position.x;
+          const dz = targetChar.mesh.position.z - char.mesh.position.z;
+          char.mesh.rotation.y = Math.atan2(dx, dz);
+        } else if (ev.target === 'center') {
+          const dx = -char.mesh.position.x;
+          const dz = -char.mesh.position.z;
+          char.mesh.rotation.y = Math.atan2(dx, dz);
+        } else if (['forward', 'back', 'left', 'right'].includes(ev.target)) {
+          const dirMap = { forward: 0, back: Math.PI, left: -Math.PI / 2, right: Math.PI / 2 };
+          char.mesh.rotation.y = dirMap[ev.target];
         }
       }
     }
@@ -1273,6 +1288,26 @@ export class Storyboard {
                 const char = this.characters.get(ev.options.character);
                 if (char && char.hideBeam) {
                   char.hideBeam();
+                }
+              }
+              // Face: rotate character to face a target (character name, 'center', or direction)
+              if (ev.name === 'Face') {
+                const char = this.characters.get(ev.options.character);
+                const target = ev.options.target;
+                if (char && char.mesh && target) {
+                  const targetChar = this.characters.get(target);
+                  if (targetChar && targetChar.mesh) {
+                    const dx = targetChar.mesh.position.x - char.mesh.position.x;
+                    const dz = targetChar.mesh.position.z - char.mesh.position.z;
+                    char.mesh.rotation.y = Math.atan2(dx, dz);
+                  } else if (target === 'center') {
+                    const dx = -char.mesh.position.x;
+                    const dz = -char.mesh.position.z;
+                    char.mesh.rotation.y = Math.atan2(dx, dz);
+                  } else if (['forward', 'back', 'left', 'right'].includes(target)) {
+                    const dirMap = { forward: 0, back: Math.PI, left: -Math.PI / 2, right: Math.PI / 2 };
+                    char.mesh.rotation.y = dirMap[target];
+                  }
                 }
               }
             }

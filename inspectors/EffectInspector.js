@@ -38,6 +38,7 @@ export class EffectInspector extends InspectorBase {
     this._checkFXMissing(fxEvents, entries);
     this._checkFXStacking(fxEvents, entries);
     this._checkFXLightingConsistency(fxEvents, entries);
+    this._checkFXDirectionConsistency(fxEvents, entries, storyText);
   }
 
   // ─── Shake 检查（原有逻辑）───
@@ -529,6 +530,146 @@ export class EffectInspector extends InspectorBase {
               'BUG-EFF-FX-STYLE-MIX'
             );
           }
+        }
+      }
+    }
+  }
+
+  /**
+   * D5-11: 光效方向与角色朝向一致性
+   * - FXHitSpark/FXBloodSpurt 应该出现在攻击者面向的方向
+   * - FXTrailSwipe 应该与攻击方向一致
+   * - FXDustKick 应该在移动方向的后方
+   */
+  _checkFXDirectionConsistency(fxEvents, entries, storyText) {
+    // Build character position + facing timeline from Position tags
+    const charStates = new Map(); // char -> { x, z, face, time }
+    const positionRegex = /\{Position:([^|}]+)\|([^}]+)\}/g;
+    const lines = storyText.split('\n');
+    let lineIdx = 0;
+
+    for (const entry of entries) {
+      if (entry.rawText) {
+        let m;
+        while ((m = positionRegex.exec(entry.rawText)) !== null) {
+          const charName = m[1];
+          const optsStr = m[2];
+          const xMatch = optsStr.match(/x=([-\d.]+)/);
+          const zMatch = optsStr.match(/z=([-\d.]+)/);
+          const faceMatch = optsStr.match(/face=([^|}]+)/);
+          charStates.set(charName, {
+            x: xMatch ? parseFloat(xMatch[1]) : 0,
+            z: zMatch ? parseFloat(zMatch[1]) : 0,
+            face: faceMatch ? faceMatch[1].trim() : 'forward',
+            time: entry.startTime,
+          });
+        }
+      }
+      // Also check entry.positions
+      if (entry.positions) {
+        for (const pos of entry.positions) {
+          const charName = pos.name || pos.character;
+          const opts = pos.options || {};
+          charStates.set(charName, {
+            x: opts.x ?? 0,
+            z: opts.z ?? 0,
+            face: opts.face ?? 'forward',
+            time: entry.startTime,
+          });
+        }
+      }
+    }
+
+    // FX that should align with attack direction (character's facing)
+    const attackAlignedFX = ['FXHitSpark', 'FXTrailSwipe', 'FXBloodSpurt'];
+    // FX that should align with movement direction (behind character)
+    const movementAlignedFX = ['FXDustKick', 'FXAfterImage'];
+    // FX that are omnidirectional (no direction check needed)
+    const omnidirectionalFX = ['FXChargeGlow', 'FXEnergyAura', 'FXShockwave', 'FXScreenShake', 'FXSpeedLines'];
+
+    for (const ev of fxEvents) {
+      if (!ev.entry || !ev.entry.character) continue;
+      const char = ev.entry.character;
+      const charState = charStates.get(char);
+      if (!charState) continue;
+
+      const fxName = ev.fxName;
+
+      // Check attack-aligned FX: character should be facing an opponent
+      if (attackAlignedFX.includes(fxName)) {
+        const face = charState.face;
+        // If face is 'forward'/'back'/'left'/'right' without context, warn
+        if (['forward', 'back', 'left', 'right'].includes(face)) {
+          // Check if there's a combat action in this entry
+          const hasCombat = ev.entry.animations?.some((a) =>
+            ['Punch', 'Kick', 'Uppercut', 'ComboPunch', 'SpinKick', 'JumpAttack', 'SpiritSwordSwing', 'Block'].includes(a)
+          );
+          if (hasCombat) {
+            this.addIssue('info',
+              `光效方向: ${char} 使用 ${fxName} 时 face=${face}（固定方向），但战斗光效应与对手方向对齐。若对手位置变化，光效可能出现在错误方向`,
+              ev.entry.startTime,
+              `设置 {Position:${char}|face=对手名} 使光效方向与攻击目标一致`,
+              'BUG-EFF-FX-DIR-001'
+            );
+          }
+        }
+      }
+
+      // Check movement-aligned FX: should have a movement animation
+      if (movementAlignedFX.includes(fxName)) {
+        const hasMoveAnim = ev.entry.animations?.some((a) =>
+          ['DashForward', 'Walk', 'Run', 'Dodge', 'Jump', 'HeroLanding'].includes(a)
+        );
+        const hasMoveEvent = ev.entry.storyEvents?.some((e) => e.name === 'Move');
+        if (!hasMoveAnim && !hasMoveEvent) {
+          this.addIssue('info',
+            `光效方向: ${char} 使用 ${fxName}（移动伴随光效）但无移动动画/事件。尘土/残影效果需要角色实际移动才有意义`,
+            ev.entry.startTime,
+            `添加 DashForward/Walk/Run 动画，或移除 ${fxName}`,
+            'BUG-EFF-FX-DIR-002'
+          );
+        }
+      }
+    }
+
+    // Multi-character scene: check if FX from different characters point at consistent targets
+    const combatEntries = entries.filter((e) =>
+      e.combat || e.combatAll || e.animations?.some((a) =>
+        ['Punch', 'Kick', 'SpiritSwordSwing', 'SpiritGunFire'].includes(a)
+      )
+    );
+
+    for (const entry of combatEntries) {
+      const entryFX = fxEvents.filter((e) => e.entry === entry).map((e) => e.fxName);
+      if (entryFX.length === 0) continue;
+
+      const charsInEntry = new Set();
+      if (entry.character) charsInEntry.add(entry.character);
+      if (entry.combat) {
+        const opts = entry.combat.options || {};
+        if (opts.attacker) charsInEntry.add(opts.attacker);
+        if (opts.defender) charsInEntry.add(opts.defender);
+      }
+      if (entry.combatAll) {
+        for (const c of entry.combatAll) {
+          const opts = c.options || {};
+          if (opts.attacker) charsInEntry.add(opts.attacker);
+          if (opts.defender) charsInEntry.add(opts.defender);
+        }
+      }
+
+      // If 3+ characters involved in combat, warn about potential direction confusion
+      if (charsInEntry.size >= 3) {
+        const hasDirectionalFX = entryFX.some((fx) =>
+          attackAlignedFX.includes(fx) || movementAlignedFX.includes(fx)
+        );
+        if (hasDirectionalFX) {
+          this.addIssue('info',
+            `多角色战斗方向: 条目 ${entry.index} 涉及 ${charsInEntry.size} 个角色且有方向性光效（${entryFX.join(', ')}）。确保每个角色的光效方向指向正确的对手`,
+            entry.startTime,
+            `为每个角色明确设置 face=目标角色，或使用 {Event:Face|character=X|target=Y} 动态调整朝向`,
+            'BUG-EFF-FX-MULTI-DIR-001'
+          );
         }
       }
     }

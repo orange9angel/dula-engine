@@ -506,30 +506,60 @@ export class CombatTraceInspector extends InspectorBase {
   }
 
   /**
-   * D4-8: 角色说话时朝向合理性
+   * D4-8: 角色说话时朝向合理性（增强版：支持多角色场景 + Event:Face 检测）
    */
   _checkDialogueFacing(entries, context) {
     const dialogueEntries = entries.filter((e) => e.character && (e.dialogue || e.text));
     const charPositionTimeline = this._buildCharPositionTimeline(entries, context);
 
+    // Collect all face events: { time, character, target }
+    const faceEvents = [];
+    for (const entry of entries) {
+      if (entry.storyEvents) {
+        for (const ev of entry.storyEvents) {
+          if (ev.name === 'Face' && ev.options?.character && ev.options?.target) {
+            faceEvents.push({
+              time: entry.startTime,
+              character: ev.options.character,
+              target: ev.options.target,
+            });
+          }
+        }
+      }
+    }
+
+    // Build per-entry character set (who is present at each dialogue)
+    const charPresence = this._buildCharPresence(entries);
+
     for (const entry of dialogueEntries) {
       const char = entry.character;
       const pos = this._getCharPositionAtTime(charPositionTimeline, entry.startTime, char);
-      if (!pos || !pos.face) continue;
+      if (!pos) continue;
 
+      // Determine who is present in the scene at this time
+      const presentChars = charPresence.get(entry.startTime) || new Set();
+      const otherPresent = Array.from(presentChars).filter((c) => c !== char);
+
+      // Determine intended listener from dialogue content
       const dialogueText = (entry.dialogue || entry.text || '').toLowerCase();
-      const otherChars = ['Yusuke', 'Kuwabara', 'Yokai'].filter((c) => c !== char);
       let talkingTo = null;
-      for (const other of otherChars) {
+      for (const other of otherPresent) {
         const lowerOther = other.toLowerCase();
-        if (dialogueText.includes(lowerOther) || dialogueText.includes('桑原') || dialogueText.includes('幽助')) {
+        const nameAliases = {
+          yusuke: ['yusuke', '幽助'],
+          kuwabara: ['kuwabara', '桑原'],
+          yokai: ['yokai', '妖怪'],
+        };
+        const aliases = nameAliases[lowerOther] || [lowerOther];
+        if (aliases.some((a) => dialogueText.includes(a))) {
           talkingTo = other;
           break;
         }
       }
 
-      if (!talkingTo) {
-        for (const other of otherChars) {
+      // Fallback: nearest other character in time
+      if (!talkingTo && otherPresent.length > 0) {
+        for (const other of otherPresent) {
           const otherEntries = entries.filter((e) =>
             e.character === other &&
             Math.abs(e.startTime - entry.startTime) < 5
@@ -551,11 +581,24 @@ export class CombatTraceInspector extends InspectorBase {
             toOpp.x /= toOppLen;
             toOpp.z /= toOppLen;
             const dot = faceDir.x * toOpp.x + faceDir.z * toOpp.z;
-            if (dot < 0.3) {
+            const angle = Math.acos(Math.max(-1, Math.min(1, dot))) * 180 / Math.PI;
+
+            // Check if there's a Face event that corrects this
+            const hasFaceEvent = faceEvents.some((fe) =>
+              fe.character === char &&
+              fe.target === talkingTo &&
+              Math.abs(fe.time - entry.startTime) < 0.5
+            );
+
+            if (dot < 0.3 && !hasFaceEvent) {
+              const isMultiChar = otherPresent.length >= 2;
+              const multiHint = isMultiChar
+                ? `。注意：当前场景有 ${otherPresent.length + 1} 个角色在场，${char} 的 face=${pos.face || 'forward'} 可能指向了错误的对象`
+                : '';
               this.addIssue('warning',
-                `对话合理性: ${char} 在说"${(entry.dialogue || entry.text || '').substring(0, 15)}..."时未面向 ${talkingTo}（夹角约 ${Math.acos(Math.max(-1, Math.min(1, dot))) * 180 / Math.PI | 0}度）。角色说话时通常应面向对话对象`,
+                `对话合理性: ${char} 在说"${(entry.dialogue || entry.text || '').substring(0, 15)}..."时未面向 ${talkingTo}（夹角约 ${angle | 0}度）${multiHint}`,
                 entry.startTime,
-                `设置 {Position:${char}|face=${talkingTo}} 使角色面向对话对象`,
+                `设置 {Position:${char}|face=${talkingTo}} 或在对话前添加 {Event:Face|character=${char}|target=${talkingTo}}`,
                 'COMBAT-DIALOGUE-FACE-001'
               );
             }
@@ -563,6 +606,48 @@ export class CombatTraceInspector extends InspectorBase {
         }
       }
     }
+  }
+
+  /**
+   * Build character presence timeline: at each time point, which characters are in the scene
+   */
+  _buildCharPresence(entries) {
+    const presence = new Map();
+    const charScenes = new Map();
+    let currentScene = null;
+
+    for (const entry of entries) {
+      if (entry.scene) currentScene = entry.scene;
+      if (entry.character) {
+        if (!charScenes.has(entry.character)) charScenes.set(entry.character, []);
+        charScenes.get(entry.character).push({ start: entry.startTime, end: entry.endTime, scene: currentScene });
+      }
+      // Also include characters from Position tags
+      if (entry.positions) {
+        for (const pos of entry.positions) {
+          const name = pos.name || pos.character;
+          if (name && !charScenes.has(name)) {
+            charScenes.set(name, [{ start: entry.startTime, end: Infinity, scene: currentScene }]);
+          }
+        }
+      }
+    }
+
+    for (const entry of entries) {
+      if (entry.scene) currentScene = entry.scene;
+      const present = new Set();
+      for (const [char, ranges] of charScenes) {
+        for (const r of ranges) {
+          if (r.scene === currentScene && entry.startTime >= r.start && entry.startTime <= r.end + 1) {
+            present.add(char);
+            break;
+          }
+        }
+      }
+      presence.set(entry.startTime, present);
+    }
+
+    return presence;
   }
 
   /**
