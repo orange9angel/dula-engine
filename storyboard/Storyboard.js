@@ -1317,6 +1317,21 @@ export class Storyboard {
                   }
                 }
               }
+              // JointMarkers: toggle visual joint markers on a character
+              if (ev.name === 'JointMarkers') {
+                const char = this.characters.get(ev.options.character);
+                if (char) {
+                  const visible = ev.options.visible !== false && ev.options.visible !== 'false';
+                  if (visible && Object.keys(char.jointMarkers).length === 0) {
+                    char.createJointMarkers({
+                      size: ev.options.size ?? 0.03,
+                      opacity: ev.options.opacity ?? 0.85,
+                    });
+                  } else if (Object.keys(char.jointMarkers).length > 0) {
+                    char.setJointMarkersVisible(visible);
+                  }
+                }
+              }
             }
           }
         }

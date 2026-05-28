@@ -54,7 +54,7 @@ export class CharacterBase {
     this.particleEmitters = {}; // particle systems for trail / burst effects
     // Reusable light effect components (GlowEffect, AuraEffect, etc.)
     this.lightEffects = {};     // { name: effectInstance }
-    this.baseY = 0;
+    this.baseY = 0.12;
     this.isSpeaking = false;
     this.speakStartTime = 0;
     this.speakEndTime = 0;
@@ -75,6 +75,11 @@ export class CharacterBase {
       startTime: 0,
       endTime: 0,
     };
+    // ── Joint Marker System ──
+    // 可视化关节点标记，用于调试和动作演示
+    this.jointMarkers = {};     // { jointName: THREE.Mesh marker }
+    this.jointMarkersVisible = false;
+
     // ── Action Matrix Controller ──
     // 运行时动作矩阵系统：动画通过矩阵描述姿势，由控制器统一应用
     // 延迟初始化：在首次播放矩阵动画时创建，避免无矩阵动画的角色浪费资源
@@ -454,14 +459,15 @@ export class CharacterBase {
 
   animateBody(time, delta) {
     if (!this.headGroup) return;
-    // Subtle nodding while speaking — no horizontal sway
-    // Reduced amplitude and frequency for natural feel
-    this.headGroup.rotation.x = Math.sin(time * 6) * 0.025;
+    // Disabled — no head movement during speaking for clean motion demo
+    // this.headGroup.rotation.x = Math.sin(time * 6) * 0.025;
   }
 
   setPosition(x, y, z) {
-    this.mesh.position.set(x, y, z);
-    this.baseY = y;
+    // Auto-apply foot offset so shoes sit on ground, not below it
+    const groundOffset = 0.12;
+    this.mesh.position.set(x, y + groundOffset, z);
+    this.baseY = y + groundOffset;
   }
 
   lookAt(target) {
@@ -618,17 +624,13 @@ export class CharacterBase {
   }
 
   _updateIdle(time) {
-    // Subtle breathing when no animation is active
-    // Vertical only — no horizontal sway to avoid conflicting with combat poses
-    if (!this._idleStartTime) this._idleStartTime = time;
-    const idleT = time - this._idleStartTime;
-    const breath = Math.sin(idleT * 2.0) * 0.008;
+    // Static idle — no breathing sway, no head movement
+    // Keeps character perfectly still when no animation is active
     if (this.mesh) {
-      this.mesh.position.y = this.baseY + breath;
+      this.mesh.position.y = this.baseY;
     }
     if (this.headGroup) {
-      // Minimal head movement — barely perceptible
-      this.headGroup.rotation.x = Math.sin(idleT * 1.5) * 0.005;
+      this.headGroup.rotation.set(0, 0, 0);
     }
   }
 
@@ -675,11 +677,83 @@ export class CharacterBase {
     this._faceBaseState = state;
   }
 
+  /**
+   * Create visual joint markers for debugging and motion demonstration.
+   * Supported joints: head, rightShoulder, rightElbow, rightWrist,
+   *   leftShoulder, leftElbow, leftWrist, rightHip, rightKnee, rightAnkle,
+   *   leftHip, leftKnee, leftAnkle, root
+   * @param {Object} options
+   * @param {number} [options.size=0.025] — marker sphere radius
+   * @param {number} [options.opacity=0.85] — marker opacity
+   */
+  createJointMarkers(options = {}) {
+    const size = options.size ?? 0.025;
+    const opacity = options.opacity ?? 0.85;
+
+    // Remove existing markers
+    this.removeJointMarkers();
+
+    const markerMat = new THREE.MeshBasicMaterial({
+      color: 0x00ff88,
+      transparent: true,
+      opacity,
+      depthTest: false,
+    });
+
+    const jointDefs = [
+      { name: 'head', target: this.headGroup, color: 0xff5555 },
+      { name: 'rightShoulder', target: this.rightArm, color: 0x5588ff },
+      { name: 'rightElbow', target: this.rightElbow, color: 0x66aaff },
+      { name: 'rightWrist', target: this.rightWrist, color: 0x88ccff },
+      { name: 'leftShoulder', target: this.leftArm, color: 0xff5555 },
+      { name: 'leftElbow', target: this.leftElbow, color: 0xff6666 },
+      { name: 'leftWrist', target: this.leftWrist, color: 0xff8888 },
+      { name: 'rightHip', target: this.rightLeg, color: 0x55ff55 },
+      { name: 'rightKnee', target: this.rightKnee, color: 0x66ff66 },
+      { name: 'rightAnkle', target: this.rightAnkle, color: 0x88ff88 },
+      { name: 'leftHip', target: this.leftLeg, color: 0xaa55ff },
+      { name: 'leftKnee', target: this.leftKnee, color: 0xbb66ff },
+      { name: 'leftAnkle', target: this.leftAnkle, color: 0xcc88ff },
+      { name: 'root', target: this.mesh, color: 0xffff00, offsetY: 1.6 },
+    ];
+
+    for (const def of jointDefs) {
+      if (!def.target) continue;
+      const mat = markerMat.clone();
+      mat.color.setHex(def.color);
+      const marker = new THREE.Mesh(new THREE.SphereGeometry(size, 8, 8), mat);
+      marker.renderOrder = 999;
+      if (def.offsetY) marker.position.y = def.offsetY;
+      def.target.add(marker);
+      this.jointMarkers[def.name] = marker;
+    }
+
+    this.jointMarkersVisible = true;
+  }
+
+  removeJointMarkers() {
+    for (const [name, marker] of Object.entries(this.jointMarkers)) {
+      if (marker.parent) marker.parent.remove(marker);
+      if (marker.geometry) marker.geometry.dispose();
+      if (marker.material) marker.material.dispose();
+    }
+    this.jointMarkers = {};
+    this.jointMarkersVisible = false;
+  }
+
+  setJointMarkersVisible(visible) {
+    this.jointMarkersVisible = visible;
+    for (const marker of Object.values(this.jointMarkers)) {
+      marker.visible = visible;
+    }
+  }
+
   dispose() {
     // Dispose light effects
     for (const effect of Object.values(this.lightEffects)) {
       if (effect.dispose) effect.dispose();
     }
     this.lightEffects = {};
+    this.removeJointMarkers();
   }
 }

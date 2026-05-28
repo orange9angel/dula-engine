@@ -190,7 +190,20 @@ export class ActionMatrixController {
     if (pose.mesh && c.mesh && base.mesh) {
       const m = pose.mesh;
       if (m.x !== undefined) c.mesh.position.x = base.mesh.x + m.x;
-      if (m.y !== undefined) c.mesh.position.y = base.mesh.y + m.y;
+      if (m.y !== undefined) {
+        let targetY = base.mesh.y + m.y;
+        // Floor clamp: never let feet go below ground (y=0)
+        // Character foot offset from mesh origin is approximately 0.9 units
+        // So mesh Y must stay >= 0.9 to keep feet on ground
+        // But baseY already accounts for shoe offset (0.12), so clamp to baseY
+        // For jumping actions (m.y > 0), allow going up
+        // For crouching/ground actions, allow slight dip but not below baseY
+        const floorY = c.baseY !== undefined ? c.baseY : 0.12;
+        if (targetY < floorY) {
+          targetY = floorY;
+        }
+        c.mesh.position.y = targetY;
+      }
       if (m.z !== undefined) c.mesh.position.z = base.mesh.z + m.z;
       if (m.rx !== undefined) c.mesh.rotation.x = base.mesh.rx + m.rx;
       if (m.ry !== undefined) c.mesh.rotation.y = base.mesh.ry + m.ry;
@@ -276,14 +289,10 @@ export class ActionMatrixController {
     const returnSpeed = 5 * 0.016;
     const idlePose = PoseMatrix.lerp(this._lastAppliedPose, PoseMatrix.zero(), returnSpeed);
 
-    // Subtle breathing — vertical only, no horizontal sway
-    // This avoids conflicting with combat animations and facing direction
-    const breath = Math.sin(time * 2.0) * 0.008;
-
-    idlePose.mesh = { ...idlePose.mesh, y: breath };
-    idlePose.headGroup = { ...idlePose.headGroup, rx: Math.sin(time * 1.5) * 0.005 };
-
-    // No arm idle — let the last action pose or combat stance hold naturally
+    // Static idle — no breathing, no head sway
+    // Character holds last pose perfectly still
+    idlePose.mesh = { ...idlePose.mesh, y: 0 };
+    idlePose.headGroup = { rx: 0, ry: 0, rz: 0 };
 
     this._applyPose(idlePose);
     this._lastAppliedPose = idlePose.clone();
