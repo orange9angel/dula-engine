@@ -664,9 +664,15 @@ export class CharacterBase {
     }
     if (this.mouth) {
       state.mouth = {
-        scale: this.mouth.scale.clone(),
-        position: this.mouth.position.clone(),
-        rotation: this.mouth.rotation.clone(),
+        sx: this.mouth.scale.x,
+        sy: this.mouth.scale.y,
+        sz: this.mouth.scale.z,
+        x: this.mouth.position.x,
+        y: this.mouth.position.y,
+        z: this.mouth.position.z,
+        rx: this.mouth.rotation.x,
+        ry: this.mouth.rotation.y,
+        rz: this.mouth.rotation.z,
       };
     }
     if (this.headGroup) {

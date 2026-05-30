@@ -464,11 +464,13 @@ export class Storyboard {
           const current = { x: char.mesh.position.x, y: char.mesh.position.y, z: char.mesh.position.z };
           targetPos = {
             x: current.x + (ev.x || 0),
-            y: current.y + (ev.y || 0),
+            y: ev.y !== undefined ? current.y + ev.y : current.y,
             z: current.z + (ev.z || 0),
           };
         } else {
-          targetPos = { x: ev.x || 0, y: ev.y || 0, z: ev.z || 0 };
+          targetPos = { x: ev.x || 0, z: ev.z || 0 };
+          // Only set y if explicitly provided; otherwise keep current height
+          if (ev.y !== undefined) targetPos.y = ev.y;
         }
         char.moveTo(targetPos, ev.startTime, ev.duration || 1.0);
         // Auto-play movement animation (Walk by default, or specified action like Swim)
@@ -722,11 +724,13 @@ export class Storyboard {
           const current = { x: char.mesh.position.x, y: char.mesh.position.y, z: char.mesh.position.z };
           targetPos = {
             x: current.x + (ev.x || 0),
-            y: current.y + (ev.y || 0),
+            y: ev.y !== undefined ? current.y + ev.y : current.y,
             z: current.z + (ev.z || 0),
           };
         } else {
-          targetPos = { x: ev.x || 0, y: ev.y || 0, z: ev.z || 0 };
+          targetPos = { x: ev.x || 0, z: ev.z || 0 };
+          // Only set y if explicitly provided; otherwise keep current height
+          if (ev.y !== undefined) targetPos.y = ev.y;
         }
         char.moveTo(targetPos, ev.startTime, ev.duration || 1.0);
       } else if (ev.type === 'animate') {
@@ -974,40 +978,61 @@ export class Storyboard {
         this.currentScene.timeScale = this.cinematicAdapter.computeTimeScale(t);
       }
 
-      // Dynamic character add/remove based on speaking time
-      // Characters are added to scene just before their first line and removed after their last line
+      // Dynamic character add/remove based on scene membership
+      // Characters belong to a scene if they have any entry (speaking, positioned, or event) in that scene.
+      // Once added, they stay for the entire scene duration unless explicitly removed.
       if (this.currentScene) {
-        for (const entry of this.entries) {
-          if (!entry.character) continue;
-          const char = this.characters.get(entry.character);
-          if (!char) continue;
-
+        for (const [name, char] of this.characters) {
           const isInScene = this.currentScene.characters.includes(char);
-          const isSpeakingWindow = t >= entry.startTime - 0.5 && t <= entry.endTime + 0.3;
-          const isCurrentScene = this.currentSceneName && this.characterScenes.get(entry.character)?.has(this.currentSceneName);
+          const isCurrentScene = this.currentSceneName && this.characterScenes.get(name)?.has(this.currentSceneName);
+          if (!isCurrentScene) continue;
 
-          if (isSpeakingWindow && isCurrentScene && !isInScene) {
-            // Character enters scene just before speaking
-            // console.log('[update] adding', entry.character, 'to', this.currentSceneName, 't=', t.toFixed(2), 'for speaking');
-            this.currentScene.addCharacter(char);
-            // Teleport to a reasonable position if no prior position set
-            if (char.mesh.position.x === 0 && char.mesh.position.z === 0) {
-              const charsInScene = this.currentScene.characters.length;
-              if (charsInScene === 1) {
-                char.setPosition(0, 0, 0);
-              } else if (charsInScene === 2) {
-                char.setPosition(1.5, 0, 0);
-              } else {
-                const spacing = 2;
-                const offset = ((charsInScene - 1) * spacing) / 2;
-                char.setPosition((charsInScene - 1) * spacing - offset, 0, 0);
+          // Check if this character has explicit activity (speaking, animation, story events)
+          // in the current scene. Position-only characters are treated as background.
+          let hasExplicitActivity = false;
+          let activitySceneCursor = this.entries.find((e) => e.scene)?.scene || this.currentSceneName;
+          for (const entry of this.entries) {
+            if (entry.scene) activitySceneCursor = entry.scene;
+            if (activitySceneCursor !== this.currentSceneName) continue;
+            // Speaking or animation tags = explicit activity
+            if (entry.character === name) { hasExplicitActivity = true; break; }
+            // Story events = explicit activity
+            if (entry.storyEvents) {
+              for (const ev of entry.storyEvents) { if (ev.options.character === name) { hasExplicitActivity = true; break; } }
+              if (hasExplicitActivity) break;
+            }
+          }
+
+          if (!isInScene) {
+            if (hasExplicitActivity) {
+              // Character with explicit activity: add just before their first speaking window
+              for (const entry of this.entries) {
+                if (entry.character === name && t >= entry.startTime - 0.5 && t <= entry.endTime + 0.3) {
+                  this.currentScene.addCharacter(char);
+                  if (char.mesh.position.x === 0 && char.mesh.position.z === 0) {
+                    const charsInScene = this.currentScene.characters.length;
+                    if (charsInScene === 1) char.setPosition(0, 0, 0);
+                    else if (charsInScene === 2) char.setPosition(1.5, 0, 0);
+                    else {
+                      const spacing = 2;
+                      const offset = ((charsInScene - 1) * spacing) / 2;
+                      char.setPosition((charsInScene - 1) * spacing - offset, 0, 0);
+                    }
+                    char.mesh.lookAt(0, 1.5, 5);
+                  }
+                  break;
+                }
               }
-              char.mesh.lookAt(0, 1.5, 5);
+            } else {
+              // Background character (no explicit activity in this scene): add immediately and keep
+              this.currentScene.addCharacter(char);
             }
           }
         }
 
-        // Remove characters whose last line in this scene has ended (with small grace period)
+        // Remove characters whose last activity in this scene has ended (with small grace period)
+        // A character's "activity" includes: speaking, being positioned, or having story events.
+        // If a character has NO explicit activity in a scene, they stay for the entire scene duration.
         for (const [name, char] of this.characters) {
           if (!this.currentScene.characters.includes(char)) {
             // console.log('[update] skip remove', name, 'not in scene');
@@ -1019,17 +1044,47 @@ export class Storyboard {
             continue;
           }
 
-          // Find the last entry for this character in the current scene
+          // Check if this character has ANY explicit activity (speaking, animation, story events)
+          // in the current scene. Position-only characters are treated as background and stay for the whole scene.
+          let hasExplicitActivity = false;
+          let activitySceneCursor = this.entries.find((e) => e.scene)?.scene || this.currentSceneName;
+          for (const entry of this.entries) {
+            if (entry.scene) activitySceneCursor = entry.scene;
+            if (activitySceneCursor !== this.currentSceneName) continue;
+            // Speaking or animation tags = explicit activity
+            if (entry.character === name) { hasExplicitActivity = true; break; }
+            // Story events = explicit activity
+            if (entry.storyEvents) {
+              for (const ev of entry.storyEvents) { if (ev.options.character === name) { hasExplicitActivity = true; break; } }
+              if (hasExplicitActivity) break;
+            }
+          }
+
+          // If no explicit activity, the character stays for the entire scene — don't remove
+          if (!hasExplicitActivity) {
+            continue;
+          }
+
+          // Character has explicit activity: remove after last activity + grace period
           let lastEndTime = -1;
           let sceneCursor = this.entries.find((e) => e.scene)?.scene || this.currentSceneName;
           for (const entry of this.entries) {
             if (entry.scene) sceneCursor = entry.scene;
-            if (entry.character === name && sceneCursor === this.currentSceneName) {
+            if (sceneCursor !== this.currentSceneName) continue;
+            // Direct character entry
+            if (entry.character === name) {
               lastEndTime = Math.max(lastEndTime, entry.endTime);
+            }
+            // Story events targeting this character also count as activity
+            if (entry.storyEvents) {
+              for (const ev of entry.storyEvents) {
+                if (ev.options.character === name) {
+                  lastEndTime = Math.max(lastEndTime, entry.endTime);
+                }
+              }
             }
           }
 
-          // Also consider storyEvents (e.g., Event:Move) for this character in this scene
           let eventEndTime = -1;
           let eventSceneCursor = this.entries.find((e) => e.scene)?.scene || this.currentSceneName;
           for (const entry of this.entries) {
@@ -1044,8 +1099,6 @@ export class Storyboard {
             }
           }
 
-          // Also consider storyPlacements: if character has explicit positions in this scene,
-          // extend their presence to the end of the scene (last entry in this scene)
           let placementEndTime = -1;
           let placementSceneCursor = this.entries.find((e) => e.scene)?.scene || this.currentSceneName;
           for (const entry of this.entries) {
@@ -1061,9 +1114,7 @@ export class Storyboard {
 
           const effectiveLastEndTime = Math.max(lastEndTime, eventEndTime, placementEndTime);
 
-          // If current time is past their last line/event/placement + grace, remove them
           if (effectiveLastEndTime > 0 && t > effectiveLastEndTime + 1.0) {
-            // console.log('[update] removing', name, 'from', this.currentSceneName, 't=', t.toFixed(2), 'lastEndTime=', lastEndTime, 'eventEndTime=', eventEndTime, 'placementEndTime=', placementEndTime);
             this.currentScene.removeCharacter(char);
           }
         }

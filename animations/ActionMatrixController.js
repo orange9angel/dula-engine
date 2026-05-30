@@ -58,6 +58,8 @@ export class ActionMatrixController {
     this._baselinePose.leftKnee = captureRot(c.leftKnee);
     this._baselinePose.leftAnkle = captureRot(c.leftAnkle);
 
+    // Baseline captured silently
+
     if (c.mesh) {
       this._baselinePose.mesh = {
         x: c.mesh.position.x, y: c.mesh.position.y, z: c.mesh.position.z,
@@ -132,6 +134,8 @@ export class ActionMatrixController {
     }
 
     let finalPose = targetPose;
+
+
     if (this._inTransition) {
       const elapsed = time - this._transitionStartTime;
       const t = Math.min(1, elapsed / this._transitionDuration);
@@ -288,6 +292,8 @@ export class ActionMatrixController {
     const returnSpeed = 2 * 0.016;  // 更慢的过渡，保持动画结束姿势更久
     const idlePose = PoseMatrix.lerp(this._lastAppliedPose, PoseMatrix.zero(), returnSpeed);
 
+    // Idle pose transition (silent)
+
     // Static idle — no breathing, no head sway
     // Character holds last pose perfectly still
     // Preserve mesh Y offset (don't force to 0, let it return to base naturally)
@@ -297,6 +303,16 @@ export class ActionMatrixController {
       idlePose.mesh = {};
     }
     idlePose.headGroup = { rx: 0, ry: 0, rz: 0 };
+    // Reset facial features to base state (prevent mouth/eyebrow drift)
+    idlePose.mouth = { sx: 0, sy: 0, sz: 0, px: 0, py: 0, pz: 0, rx: 0, ry: 0, rz: 0 };
+    idlePose.eyebrows = {
+      left: { py: 0, pz: 0, rz: 0 },
+      right: { py: 0, pz: 0, rz: 0 },
+    };
+    idlePose.eyelids = {
+      left: { visible: false, sy: 0 },
+      right: { visible: false, sy: 0 },
+    };
 
     this._applyPose(idlePose);
     this._lastAppliedPose = idlePose.clone();
