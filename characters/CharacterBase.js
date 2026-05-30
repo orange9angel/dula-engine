@@ -265,8 +265,8 @@ export class CharacterBase {
       }
     }
 
-    // 如果有矩阵动画激活，先更新矩阵控制器
-    if (hasActiveMatrixAnims) {
+    // 更新矩阵控制器：有动画时应用动画，无动画时执行 idle 恢复
+    if (this._actionMatrix) {
       this._actionMatrix.update(time, delta);
     }
 

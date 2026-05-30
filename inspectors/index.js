@@ -27,6 +27,7 @@ export { CombatTraceInspector } from './CombatTraceInspector.js';
 export { TimelineTraceInspector } from './TimelineTraceInspector.js';
 export { StoryTrajectoryInspector } from './StoryTrajectoryInspector.js';
 export { ActionMatrixInspector } from './ActionMatrixInspector.js';
+export { PoseTraceInspector } from './PoseTraceInspector.js';
 
 // Import locally for getAllInspectors to avoid TDZ
 import { SceneInspector as _SceneInspector } from './SceneInspector.js';
@@ -51,6 +52,7 @@ import { CombatTraceInspector as _CombatTraceInspector } from './CombatTraceInsp
 import { TimelineTraceInspector as _TimelineTraceInspector } from './TimelineTraceInspector.js';
 import { StoryTrajectoryInspector as _StoryTrajectoryInspector } from './StoryTrajectoryInspector.js';
 import { ActionMatrixInspector as _ActionMatrixInspector } from './ActionMatrixInspector.js';
+import { PoseTraceInspector as _PoseTraceInspector } from './PoseTraceInspector.js';
 
 /**
  * 获取所有 inspector 实例
@@ -80,5 +82,6 @@ export function getAllInspectors() {
     new _TimelineTraceInspector(),
     new _StoryTrajectoryInspector(),
     new _ActionMatrixInspector(),
+    new _PoseTraceInspector(),
   ];
 }

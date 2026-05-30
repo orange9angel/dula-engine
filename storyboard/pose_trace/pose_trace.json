@@ -1,0 +1,13 @@
+{
+  "fps": 60,
+  "startTime": 0,
+  "endTime": 0,
+  "entries": [],
+  "samples": [
+    {
+      "time": 0,
+      "scene": null,
+      "characters": []
+    }
+  ]
+}

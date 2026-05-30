@@ -285,7 +285,7 @@ export class ActionMatrixController {
     const base = this._baselinePose;
     if (!base) return;
 
-    const returnSpeed = 5 * 0.016;
+    const returnSpeed = 2 * 0.016;  // 更慢的过渡，保持动画结束姿势更久
     const idlePose = PoseMatrix.lerp(this._lastAppliedPose, PoseMatrix.zero(), returnSpeed);
 
     // Static idle — no breathing, no head sway
