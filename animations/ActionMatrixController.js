@@ -94,7 +94,9 @@ export class ActionMatrixController {
   }
 
   update(time, delta) {
-    if (!this._baselinePose) this.captureBaseline();
+    if (!this._baselinePose) {
+      this.captureBaseline();
+    }
 
     const activeAnims = [];
     for (const anim of this._matrixAnims) {
@@ -192,13 +194,10 @@ export class ActionMatrixController {
       if (m.x !== undefined) c.mesh.position.x = base.mesh.x + m.x;
       if (m.y !== undefined) {
         let targetY = base.mesh.y + m.y;
-        // Floor clamp: never let feet go below ground (y=0)
-        // Character foot offset from mesh origin is approximately 0.9 units
-        // So mesh Y must stay >= 0.9 to keep feet on ground
-        // But baseY already accounts for shoe offset (0.12), so clamp to baseY
-        // For jumping actions (m.y > 0), allow going up
-        // For crouching/ground actions, allow slight dip but not below baseY
-        const floorY = c.baseY !== undefined ? c.baseY : 0.12;
+        // Floor clamp: allow crouching (m.y < 0) but never let feet go below ground
+        // For jumping actions (m.y > 0), allow going up freely
+        // For crouching, allow up to 0.5 units below baseY (deep crouch)
+        const floorY = (c.baseY !== undefined ? c.baseY : 0.12) - 0.5;
         if (targetY < floorY) {
           targetY = floorY;
         }
@@ -291,7 +290,12 @@ export class ActionMatrixController {
 
     // Static idle — no breathing, no head sway
     // Character holds last pose perfectly still
-    idlePose.mesh = { ...idlePose.mesh, y: 0 };
+    // Preserve mesh Y offset (don't force to 0, let it return to base naturally)
+    if (idlePose.mesh) {
+      idlePose.mesh = { ...idlePose.mesh };
+    } else {
+      idlePose.mesh = {};
+    }
     idlePose.headGroup = { rx: 0, ry: 0, rz: 0 };
 
     this._applyPose(idlePose);

@@ -238,6 +238,7 @@ export class CharacterBase {
       a => time >= a.startTime && time <= a.endTime
     );
 
+
     // ── Animation blending system (v2) ──
     // Categorize active animations by priority
     const bodyAnims = [];

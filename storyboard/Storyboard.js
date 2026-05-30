@@ -298,7 +298,7 @@ export class Storyboard {
     ]);
     const ONE_SHOT_BODY_ANIMS = new Set([
       'Punch', 'ComboPunch', 'Kick', 'SpinKick', 'ArcadeSpinKick', 'JumpFlyingKick', 'Uppercut',
-      'AirTatsumaki',
+      'AirTatsumaki', 'RyuHurricaneKick',
       'WeaveStep', 'HurricaneKick', 'DragonPunch', 'BackFist', 'SweepKick', 'KneeStrike',
       'SpiritSwordSwing', 'SpiritGunFire', 'SpiritGunCharge', 'SpiritSwordDraw',
       'JumpAttack', 'DashForward', 'Dodge', 'BoxerGuardHop', 'Block', 'HitStagger',
@@ -1335,7 +1335,6 @@ export class Storyboard {
             }
           }
         }
-        // console.log('[update t=' + t.toFixed(2) + '] BEFORE currentScene.update, chars count=', this.currentScene.characters.length);
         const timeScale = this.cinematicAdapter ? this.cinematicAdapter.computeTimeScale(t) : 1.0;
         this.currentScene.update(t, 0.016 * timeScale);
         // console.log('[update t=' + t.toFixed(2) + '] AFTER currentScene.update, chars count=', this.currentScene.characters.length, 'scene=', this.currentScene.name);
