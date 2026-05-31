@@ -69,13 +69,13 @@ export function runPreflight(context) {
 
   // ── 3. 动画检查 ──
   const usedAnims = new Set();
-  const animRegex = /\{([A-Z][a-zA-Z0-9]+)\}/g;
-  const namespaces = ['Camera', 'Music', 'Ball', 'Prop', 'Position', 'SFX', 'Transition', 'Event', 'Dunk'];
+  const animRegex = /\{([A-Z][a-zA-Z0-9]+)(?:\|[^}]*)?\}/g;
+  const namespaces = ['Camera', 'Music', 'Ball', 'Prop', 'Position', 'SFX', 'Transition', 'Event', 'Dunk', 'Hitstop', 'Voice'];
   let m;
   while ((m = animRegex.exec(storyText)) !== null) {
     if (!namespaces.includes(m[1])) usedAnims.add(m[1]);
   }
-  const nsAnimRegex = /\{Animation:([^}]+)\}/g;
+  const nsAnimRegex = /\{Animation:([^}|]+)(?:\|[^}]*)?\}/g;
   while ((m = nsAnimRegex.exec(storyText)) !== null) {
     usedAnims.add(m[1]);
   }
@@ -103,7 +103,7 @@ export function runPreflight(context) {
     }
   }
   // Fallback: also include hardcoded list in case scan fails
-  const fallbackAnims = ['Walk', 'Run', 'WaveHand', 'Jump', 'StompFoot', 'SwayBody', 'Nod', 'ShakeHead', 'TurnToCamera', 'SwingRacket', 'Bow', 'LookAround', 'PointForward', 'ScratchHead', 'HandsOnHips', 'ClapHands', 'Celebrate', 'Shrug', 'SurprisedJump', 'Tremble', 'Think', 'SitDown', 'CrossArms', 'FlailArms', 'LookUp', 'ReachOut', 'PullOutRacket', 'TakeOutFromPocket', 'Spin', 'PanicSpin', 'NoseBlink', 'Float', 'WaddleWalk', 'ReachHand', 'Cry', 'LazyStretch', 'Grovel', 'StudyDespair', 'TriumphPose', 'RunAway', 'CrashLand', 'FallPanic', 'FlyPose', 'Curtsy', 'Giggle', 'PlayViolin', 'Scold', 'Blush', 'Baking', 'LookUpSky', 'WaveUp', 'TandemFlight', 'PullOpenDrawer', 'JumpIntoDrawer'];
+  const fallbackAnims = ['Walk', 'Run', 'WaveHand', 'Jump', 'StompFoot', 'Nod', 'ShakeHead', 'TurnToCamera', 'SwingRacket', 'Bow', 'LookAround', 'PointForward', 'ScratchHead', 'HandsOnHips', 'ClapHands', 'Celebrate', 'Shrug', 'SurprisedJump', 'Tremble', 'Think', 'SitDown', 'CrossArms', 'FlailArms', 'LookUp', 'ReachOut', 'PullOutRacket', 'TakeOutFromPocket', 'Spin', 'PanicSpin', 'NoseBlink', 'Float', 'WaddleWalk', 'ReachHand', 'Cry', 'LazyStretch', 'Grovel', 'StudyDespair', 'TriumphPose', 'RunAway', 'CrashLand', 'FallPanic', 'FlyPose', 'Curtsy', 'Giggle', 'PlayViolin', 'Scold', 'Blush', 'Baking', 'LookUpSky', 'WaveUp', 'TandemFlight', 'PullOpenDrawer', 'JumpIntoDrawer'];
   for (const anim of fallbackAnims) knownAnims.add(anim);
 
   const customAnimsDir = path.join(episodeDir, 'animations');

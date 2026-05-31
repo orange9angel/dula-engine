@@ -27,9 +27,11 @@ export class PoseMatrix {
     this.headGroup = null;
     this.rightShoulder = null;
     this.rightElbow = null;
+    this.rightElbowTwist = null;
     this.rightWrist = null;
     this.leftShoulder = null;
     this.leftElbow = null;
+    this.leftElbowTwist = null;
     this.leftWrist = null;
     this.rightHip = null;
     this.rightKnee = null;
@@ -58,8 +60,8 @@ export class PoseMatrix {
   static lerp(a, b, t) {
     const result = new PoseMatrix();
     const joints = [
-      'headGroup', 'rightShoulder', 'rightElbow', 'rightWrist',
-      'leftShoulder', 'leftElbow', 'leftWrist',
+      'headGroup', 'rightShoulder', 'rightElbow', 'rightElbowTwist', 'rightWrist',
+      'leftShoulder', 'leftElbow', 'leftElbowTwist', 'leftWrist',
       'rightHip', 'rightKnee', 'rightAnkle',
       'leftHip', 'leftKnee', 'leftAnkle',
       'mesh', 'mouth', 'eyebrows', 'eyelids', 'pupils',
@@ -108,8 +110,8 @@ export class PoseMatrix {
   static add(a, b) {
     const result = new PoseMatrix();
     const joints = [
-      'headGroup', 'rightShoulder', 'rightElbow', 'rightWrist',
-      'leftShoulder', 'leftElbow', 'leftWrist',
+      'headGroup', 'rightShoulder', 'rightElbow', 'rightElbowTwist', 'rightWrist',
+      'leftShoulder', 'leftElbow', 'leftElbowTwist', 'leftWrist',
       'rightHip', 'rightKnee', 'rightAnkle',
       'leftHip', 'leftKnee', 'leftAnkle',
       'mesh', 'mouth', 'eyebrows', 'eyelids', 'pupils',
@@ -148,8 +150,8 @@ export class PoseMatrix {
   static scale(pose, s) {
     const result = new PoseMatrix();
     const joints = [
-      'headGroup', 'rightShoulder', 'rightElbow', 'rightWrist',
-      'leftShoulder', 'leftElbow', 'leftWrist',
+      'headGroup', 'rightShoulder', 'rightElbow', 'rightElbowTwist', 'rightWrist',
+      'leftShoulder', 'leftElbow', 'leftElbowTwist', 'leftWrist',
       'rightHip', 'rightKnee', 'rightAnkle',
       'leftHip', 'leftKnee', 'leftAnkle',
       'mesh', 'mouth', 'eyebrows', 'eyelids', 'pupils',
@@ -174,8 +176,8 @@ export class PoseMatrix {
 
   isEmpty() {
     const joints = [
-      'headGroup', 'rightShoulder', 'rightElbow', 'rightWrist',
-      'leftShoulder', 'leftElbow', 'leftWrist',
+      'headGroup', 'rightShoulder', 'rightElbow', 'rightElbowTwist', 'rightWrist',
+      'leftShoulder', 'leftElbow', 'leftElbowTwist', 'leftWrist',
       'rightHip', 'rightKnee', 'rightAnkle',
       'leftHip', 'leftKnee', 'leftAnkle',
       'mesh', 'mouth', 'eyebrows', 'eyelids', 'pupils',
@@ -231,7 +233,6 @@ export const PoseType = {
 export const ANIM_TO_POSE_TYPE = {
   // idle
   Idle: PoseType.IDLE,
-  SwayBody: PoseType.IDLE,
   Breathing: PoseType.IDLE,
   FightingStance: PoseType.IDLE,
   CrossArms: PoseType.IDLE,
@@ -244,6 +245,9 @@ export const ANIM_TO_POSE_TYPE = {
   Crouch: PoseType.PREP,
   // action
   Punch: PoseType.ACTION,
+  RightPunch: PoseType.ACTION,
+  LeftPunch: PoseType.ACTION,
+  LeftRightPunchCombo: PoseType.ACTION,
   Kick: PoseType.ACTION,
   Uppercut: PoseType.ACTION,
   ComboPunch: PoseType.ACTION,

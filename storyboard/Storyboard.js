@@ -293,11 +293,13 @@ export class Storyboard {
 
     // Queue animations from SRT entries
     const LOOPING_ANIMATIONS = new Set([
-      'SwayBody', 'Walk', 'Run', 'Swim', 'Tremble', 'FlailArms',
+      'Walk', 'Run', 'Swim', 'Tremble', 'FlailArms',
       'FXEnergyAura', 'FightingStance', 'CounterStance',
     ]);
     const ONE_SHOT_BODY_ANIMS = new Set([
-      'Punch', 'ComboPunch', 'Kick', 'SpinKick', 'ArcadeSpinKick', 'JumpFlyingKick', 'Uppercut',
+      'Punch', 'LeftPunch', 'RightPunch', 'LeftRightPunchCombo', 'ComboPunch',
+      'Kick', 'SpinKick', 'ArcadeSpinKick', 'JumpFlyingKick', 'Uppercut',
+      'LeftHook', 'RightHook',
       'AirTatsumaki', 'RyuHurricaneKick',
       'WeaveStep', 'HurricaneKick', 'DragonPunch', 'BackFist', 'SweepKick', 'KneeStrike',
       'SpiritSwordSwing', 'SpiritGunFire', 'SpiritGunCharge', 'SpiritSwordDraw',
@@ -310,10 +312,15 @@ export class Storyboard {
         const char = this.characters.get(entry.character);
         if (char) {
           const entryDuration = entry.endTime - entry.startTime;
-          for (const animName of entry.animations) {
+          const animationCues = entry.animationCues || entry.animations.map((name) => ({ name, options: {} }));
+          for (const cue of animationCues) {
+            const animName = cue.name;
+            const animOptions = cue.options || {};
             const AnimClass = AnimationRegistry[animName];
             if (AnimClass) {
-              const inst = new AnimClass();
+              const inst = new AnimClass(animOptions);
+              const optionDuration = Number(animOptions.duration);
+              const cueDuration = Number.isFinite(optionDuration) && optionDuration > 0 ? optionDuration : undefined;
               const isLooping = LOOPING_ANIMATIONS.has(animName);
               const isFX = animName.startsWith('FX');
               const isOneShotBody = ONE_SHOT_BODY_ANIMS.has(animName);
@@ -321,22 +328,19 @@ export class Storyboard {
               // They play at natural speed, then hold final pose.
               // Only looping anims and FX stretch to fill entry duration.
               if (isLooping || isFX) {
-                char.playAnimation(AnimClass, entry.startTime, entryDuration);
+                char.playAnimation(AnimClass, entry.startTime, cueDuration ?? entryDuration, animOptions);
               } else if (isOneShotBody) {
-                // Natural duration, no stretch. Entry gap will be filled by idle/hold.
-                char.playAnimation(AnimClass, entry.startTime);
+                // Natural duration unless the story tag explicitly sets duration.
+                char.playAnimation(AnimClass, entry.startTime, cueDuration, animOptions);
               } else {
                 // Facial expressions and misc: stretch to entry duration
-                char.playAnimation(AnimClass, entry.startTime, entryDuration);
+                char.playAnimation(AnimClass, entry.startTime, cueDuration ?? entryDuration, animOptions);
               }
             }
           }
         }
       }
     }
-
-    // Auto-insert idle animations for characters with long gaps between animations
-    this._scheduleIdleAnimations();
 
     // Queue camera moves from SRT entries
     for (const entry of this.entries) {
@@ -352,7 +356,7 @@ export class Storyboard {
     }
 
     // Auto-detect hit pairs and store hitstop data for runtime triggering
-    const ATTACK_ANIMATIONS = ['Punch', 'SpiritSwordSwing', 'SpiritGunFire', 'ComboPunch', 'Kick', 'SpinKick', 'ArcadeSpinKick', 'JumpFlyingKick', 'HurricaneKick', 'AirTatsumaki', 'DragonPunch', 'BackFist', 'SweepKick', 'KneeStrike'];
+    const ATTACK_ANIMATIONS = ['Punch', 'LeftPunch', 'RightPunch', 'LeftRightPunchCombo', 'SpiritSwordSwing', 'SpiritGunFire', 'ComboPunch', 'Kick', 'SpinKick', 'ArcadeSpinKick', 'JumpFlyingKick', 'HurricaneKick', 'AirTatsumaki', 'DragonPunch', 'BackFist', 'SweepKick', 'KneeStrike'];
     const REACTION_ANIMATIONS = ['HitStagger', 'Block'];
     for (let i = 0; i < this.entries.length - 1; i++) {
       const entry = this.entries[i];
@@ -978,7 +982,7 @@ export class Storyboard {
         this.currentScene.timeScale = this.cinematicAdapter.computeTimeScale(t);
       }
 
-      // Dynamic character add/remove based on scene membership
+      // Dynamic character add based on scene membership
       // Characters belong to a scene if they have any entry (speaking, positioned, or event) in that scene.
       // Once added, they stay for the entire scene duration unless explicitly removed.
       if (this.currentScene) {
@@ -1030,94 +1034,6 @@ export class Storyboard {
           }
         }
 
-        // Remove characters whose last activity in this scene has ended (with small grace period)
-        // A character's "activity" includes: speaking, being positioned, or having story events.
-        // If a character has NO explicit activity in a scene, they stay for the entire scene duration.
-        for (const [name, char] of this.characters) {
-          if (!this.currentScene.characters.includes(char)) {
-            // console.log('[update] skip remove', name, 'not in scene');
-            continue;
-          }
-          const scenes = this.characterScenes.get(name);
-          if (!scenes || !scenes.has(this.currentSceneName)) {
-            // console.log('[update] skip remove', name, 'not in characterScenes for', this.currentSceneName);
-            continue;
-          }
-
-          // Check if this character has ANY explicit activity (speaking, animation, story events)
-          // in the current scene. Position-only characters are treated as background and stay for the whole scene.
-          let hasExplicitActivity = false;
-          let activitySceneCursor = this.entries.find((e) => e.scene)?.scene || this.currentSceneName;
-          for (const entry of this.entries) {
-            if (entry.scene) activitySceneCursor = entry.scene;
-            if (activitySceneCursor !== this.currentSceneName) continue;
-            // Speaking or animation tags = explicit activity
-            if (entry.character === name) { hasExplicitActivity = true; break; }
-            // Story events = explicit activity
-            if (entry.storyEvents) {
-              for (const ev of entry.storyEvents) { if (ev.options.character === name) { hasExplicitActivity = true; break; } }
-              if (hasExplicitActivity) break;
-            }
-          }
-
-          // If no explicit activity, the character stays for the entire scene — don't remove
-          if (!hasExplicitActivity) {
-            continue;
-          }
-
-          // Character has explicit activity: remove after last activity + grace period
-          let lastEndTime = -1;
-          let sceneCursor = this.entries.find((e) => e.scene)?.scene || this.currentSceneName;
-          for (const entry of this.entries) {
-            if (entry.scene) sceneCursor = entry.scene;
-            if (sceneCursor !== this.currentSceneName) continue;
-            // Direct character entry
-            if (entry.character === name) {
-              lastEndTime = Math.max(lastEndTime, entry.endTime);
-            }
-            // Story events targeting this character also count as activity
-            if (entry.storyEvents) {
-              for (const ev of entry.storyEvents) {
-                if (ev.options.character === name) {
-                  lastEndTime = Math.max(lastEndTime, entry.endTime);
-                }
-              }
-            }
-          }
-
-          let eventEndTime = -1;
-          let eventSceneCursor = this.entries.find((e) => e.scene)?.scene || this.currentSceneName;
-          for (const entry of this.entries) {
-            if (entry.scene) eventSceneCursor = entry.scene;
-            if (eventSceneCursor === this.currentSceneName && entry.storyEvents) {
-              for (const ev of entry.storyEvents) {
-                if (ev.options.character === name) {
-                  const evEnd = entry.startTime + (ev.options.duration || 1.0);
-                  eventEndTime = Math.max(eventEndTime, evEnd);
-                }
-              }
-            }
-          }
-
-          let placementEndTime = -1;
-          let placementSceneCursor = this.entries.find((e) => e.scene)?.scene || this.currentSceneName;
-          for (const entry of this.entries) {
-            if (entry.scene) placementSceneCursor = entry.scene;
-            if (placementSceneCursor === this.currentSceneName && entry.positions) {
-              for (const pos of entry.positions) {
-                if (pos.name === name) {
-                  placementEndTime = Math.max(placementEndTime, entry.endTime);
-                }
-              }
-            }
-          }
-
-          const effectiveLastEndTime = Math.max(lastEndTime, eventEndTime, placementEndTime);
-
-          if (effectiveLastEndTime > 0 && t > effectiveLastEndTime + 1.0) {
-            this.currentScene.removeCharacter(char);
-          }
-        }
         // console.log('[update t=' + t.toFixed(2) + '] chars in', this.currentSceneName, ':', this.currentScene.characters.map(c => c.constructor.name).join(','));
       }
 
@@ -1501,52 +1417,6 @@ export class Storyboard {
       this.renderer.autoClear = false;
       this.renderer.render(this.transitionScene, this.camera);
       this.renderer.autoClear = autoClear;
-    }
-  }
-
-  /**
-   * Auto-schedule idle SwayBody animations for characters that have
-   * gaps longer than 1 second with no active animation.
-   */
-  _scheduleIdleAnimations() {
-    const SwayBody = AnimationRegistry['SwayBody'];
-    if (!SwayBody) return;
-
-    for (const [charName, char] of this.characters) {
-      // Collect all animation time ranges for this character
-      const ranges = [];
-      for (const anim of char.animations) {
-        ranges.push({ start: anim.startTime, end: anim.endTime });
-      }
-      // Also include move durations as "active" time
-      for (const move of char.moves) {
-        ranges.push({ start: move.startTime, end: move.endTime });
-      }
-      ranges.sort((a, b) => a.start - b.start);
-
-      // Merge overlapping ranges
-      const merged = [];
-      for (const r of ranges) {
-        if (merged.length === 0 || r.start > merged[merged.length - 1].end + 0.1) {
-          merged.push({ start: r.start, end: r.end });
-        } else {
-          merged[merged.length - 1].end = Math.max(merged[merged.length - 1].end, r.end);
-        }
-      }
-
-      // Find gaps > 1s and fill with SwayBody
-      let lastEnd = 0;
-      for (const m of merged) {
-        if (m.start - lastEnd > 1.0) {
-          char.playAnimation(SwayBody, lastEnd + 0.1, m.start - lastEnd - 0.2);
-        }
-        lastEnd = m.end;
-      }
-      // Fill gap after last animation to end of episode
-      const episodeEnd = Math.max(...this.entries.map(e => e.endTime), 0) + 2;
-      if (episodeEnd - lastEnd > 1.0) {
-        char.playAnimation(SwayBody, lastEnd + 0.1, episodeEnd - lastEnd - 0.2);
-      }
     }
   }
 

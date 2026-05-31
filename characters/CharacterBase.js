@@ -29,9 +29,11 @@ export class CharacterBase {
     // ── 13点关节控制（v3 动作矩阵系统）──
     // 手臂：肩 → 肘 → 腕 → 手
     this.rightElbow = null;    // 右肘关节Group（rightArm的子级）
-    this.rightWrist = null;    // 右手腕关节Group（rightElbow的子级）
+    this.rightElbowTwist = null; // 右肘扭转Group（rightElbow的子级，控制ry）
+    this.rightWrist = null;    // 右手腕关节Group（rightElbowTwist的子级）
     this.leftElbow = null;     // 左肘关节Group
-    this.leftWrist = null;     // 左手腕关节Group
+    this.leftElbowTwist = null; // 左肘扭转Group（leftElbow的子级，控制ry）
+    this.leftWrist = null;     // 左手腕关节Group（leftElbowTwist的子级）
     // 腿部：髋 → 膝 → 踝 → 脚
     this.rightKnee = null;     // 右膝关节Group（rightLeg的子级）
     this.rightAnkle = null;    // 右脚踝关节Group（rightKnee的子级）
@@ -167,8 +169,8 @@ export class CharacterBase {
     }
   }
 
-  playAnimation(AnimClass, startTime, duration) {
-    const anim = new AnimClass();
+  playAnimation(AnimClass, startTime, duration, options = {}) {
+    const anim = new AnimClass(options);
     const endTime = startTime + (duration !== undefined ? duration : anim.duration);
 
     // 检测是否为矩阵动画（usePoseMatrix = true）

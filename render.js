@@ -128,6 +128,7 @@ async function renderFrames() {
 }
 
 renderFrames().catch((err) => {
-  console.error('Render failed:', err);
+  console.error('Render failed:', err.message);
+  console.error('Stack:', err.stack);
   window.onRenderComplete(0);
 });

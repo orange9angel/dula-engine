@@ -69,9 +69,9 @@ export class ActionMatrixInspector extends InspectorBase {
 
     // Pose type classification
     const poseTypes = {
-      idle: ['Idle', 'SwayBody', 'Breathing', 'FightingStance', 'CrossArms', 'HandsOnHips'],
+      idle: ['Idle', 'Breathing', 'FightingStance', 'CrossArms', 'HandsOnHips'],
       prep: ['SpiritGunCharge', 'SpiritSwordDraw', 'Ready', 'Aim', 'Crouch'],
-      action: ['Punch', 'Kick', 'Uppercut', 'ComboPunch', 'SpinKick', 'JumpAttack',
+      action: ['Punch', 'LeftPunch', 'RightPunch', 'LeftRightPunchCombo', 'Kick', 'Uppercut', 'ComboPunch', 'SpinKick', 'JumpAttack',
                'SpiritSwordSwing', 'SpiritGunFire', 'DashForward', 'HeroLanding'],
       reaction: ['HitStagger', 'Knockdown', 'Block', 'Dodge', 'Tremble', 'FacePain'],
       recovery: ['GetUp', 'FaceReset', 'ShakeHead', 'Sigh'],
@@ -235,6 +235,7 @@ export class ActionMatrixInspector extends InspectorBase {
 
     const actionFXCameraMap = {
       'Punch':        { fx: 'FXHitSpark, FXDustKick',         cam: 'FightImpact, FightSide' },
+      'LeftRightPunchCombo': { fx: 'FXHitSpark',              cam: 'FightFollow, FightSide' },
       'Kick':         { fx: 'FXHitSpark, FXTrailSwipe',       cam: 'FightImpact, FightOverhead' },
       'Uppercut':     { fx: 'FXHitSpark, FXShockwave',        cam: 'FightImpact, FightLowAngle' },
       'ComboPunch':   { fx: 'FXHitSpark',                     cam: 'FightFollow, FightSide' },
@@ -329,6 +330,7 @@ export class ActionMatrixInspector extends InspectorBase {
   _checkFXActionMatrixConsistency(matrix) {
     const requiredFX = {
       'Punch': ['FXHitSpark'],
+      'LeftRightPunchCombo': ['FXHitSpark'],
       'Kick': ['FXHitSpark'],
       'Uppercut': ['FXHitSpark'],
       'ComboPunch': ['FXHitSpark'],
@@ -552,7 +554,7 @@ export class ActionMatrixInspector extends InspectorBase {
       }
 
       // Verify action matches hit type
-      const meleeActions = ['Punch', 'Kick', 'Uppercut', 'ComboPunch', 'SpinKick', 'JumpAttack', 'SpiritSwordSwing'];
+      const meleeActions = ['Punch', 'LeftPunch', 'RightPunch', 'LeftRightPunchCombo', 'Kick', 'Uppercut', 'ComboPunch', 'SpinKick', 'JumpAttack', 'SpiritSwordSwing'];
       const projectileActions = ['SpiritGunFire'];
 
       if (hit.profile?.type === 'melee' && !meleeActions.includes(matrixRow.action)) {

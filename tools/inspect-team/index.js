@@ -307,16 +307,16 @@ function parseStory(text) {
 
       // Extract animations
       const animations = [];
-      const animRegex = /\{Animation:([^}]+)\}/g;
+      const animRegex = /\{Animation:([^}|]+)(?:\|[^}]*)?\}/g;
       let animMatch;
       while ((animMatch = animRegex.exec(rawText)) !== null) {
         animations.push(animMatch[1]);
       }
 
       // Extract bare animation tags (capitalized, not namespaced)
-      // Match {Name} where Name starts with capital and is not a known namespace
-      const bareAnimRegex = /\{([A-Z][a-zA-Z0-9]+)\}/g;
-      const namespaces = ['Camera', 'Music', 'Ball', 'Prop', 'Position', 'SFX', 'Transition', 'Event', 'Dunk'];
+      // Match {Name} or {Name|duration=...} where Name starts with capital and is not a known namespace
+      const bareAnimRegex = /\{([A-Z][a-zA-Z0-9]+)(?:\|[^}]*)?\}/g;
+      const namespaces = ['Camera', 'Music', 'Ball', 'Prop', 'Position', 'SFX', 'Transition', 'Event', 'Dunk', 'Hitstop', 'Voice'];
       while ((animMatch = bareAnimRegex.exec(rawText)) !== null) {
         const name = animMatch[1];
         if (!namespaces.includes(name) && !animations.includes(name)) {
@@ -325,7 +325,7 @@ function parseStory(text) {
       }
 
       // Also extract namespaced Animation tags: {Animation:Name}
-      const namespacedAnimRegex = /\{Animation:([^}]+)\}/g;
+      const namespacedAnimRegex = /\{Animation:([^}|]+)(?:\|[^}]*)?\}/g;
       while ((animMatch = namespacedAnimRegex.exec(rawText)) !== null) {
         const name = animMatch[1];
         if (!animations.includes(name)) {

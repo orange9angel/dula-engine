@@ -557,10 +557,19 @@ def discover_manual_sfx():
 
 
 def schedule_sfx_from_events(story_events, manual_sfx):
-    """Map story events to SFX files based on trigger hints and heuristics."""
+    """Map story events to SFX files based on trigger hints and heuristics.
+
+    Skips auto-mapping for entries that already have an explicit {SFX:Play|name=...} tag.
+    """
     scheduled = []
     if not manual_sfx:
         return scheduled
+
+    # Collect times that already have explicit SFX tags
+    explicit_sfx_times = set()
+    for ev in story_events:
+        if ev["type"] == "SFX":
+            explicit_sfx_times.add(ev["startTime"])
 
     # Helper: find best matching SFX by keyword (prefer longer/more specific names)
     def find_sfx(*keywords):
@@ -648,8 +657,11 @@ def schedule_sfx_from_events(story_events, manual_sfx):
             pass  # Ambient is handled separately if needed
 
         elif etype == "Animation":
+            # Skip auto-mapping if this time already has an explicit SFX tag
+            if t in explicit_sfx_times:
+                continue
             # Map fighting animations to SFX
-            if "Punch" in body or "ComboPunch" in body:
+            if "Punch" in body or "ComboPunch" in body or "Hook" in body:
                 sfx_file = find_sfx("punch_hit", "punch", "hit")
                 if sfx_file:
                     scheduled.append({"file": sfx_file, "startTime": t})

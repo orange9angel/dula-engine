@@ -47,9 +47,11 @@ export class ActionMatrixController {
     this._baselinePose.headGroup = captureRot(c.headGroup);
     this._baselinePose.rightShoulder = captureRot(c.rightArm);
     this._baselinePose.rightElbow = captureRot(c.rightElbow);
+    this._baselinePose.rightElbowTwist = captureRot(c.rightElbowTwist);
     this._baselinePose.rightWrist = captureRot(c.rightWrist);
     this._baselinePose.leftShoulder = captureRot(c.leftArm);
     this._baselinePose.leftElbow = captureRot(c.leftElbow);
+    this._baselinePose.leftElbowTwist = captureRot(c.leftElbowTwist);
     this._baselinePose.leftWrist = captureRot(c.leftWrist);
     this._baselinePose.rightHip = captureRot(c.rightLeg);
     this._baselinePose.rightKnee = captureRot(c.rightKnee);
@@ -182,9 +184,11 @@ export class ActionMatrixController {
     apply(c.headGroup, base.headGroup, pose.headGroup || {});
     apply(c.rightArm, base.rightShoulder, pose.rightShoulder || {});
     apply(c.rightElbow, base.rightElbow, pose.rightElbow || {});
+    apply(c.rightElbowTwist, base.rightElbowTwist, pose.rightElbowTwist || {});
     apply(c.rightWrist, base.rightWrist, pose.rightWrist || {});
     apply(c.leftArm, base.leftShoulder, pose.leftShoulder || {});
     apply(c.leftElbow, base.leftElbow, pose.leftElbow || {});
+    apply(c.leftElbowTwist, base.leftElbowTwist, pose.leftElbowTwist || {});
     apply(c.leftWrist, base.leftWrist, pose.leftWrist || {});
     apply(c.rightLeg, base.rightHip, pose.rightHip || {});
     apply(c.rightKnee, base.rightKnee, pose.rightKnee || {});

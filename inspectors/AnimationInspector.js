@@ -24,7 +24,7 @@ export class AnimationInspector extends InspectorBase {
     // Known animations from dula-assets — dynamically scan directories
     const knownAnims = new Set([
       // Common
-      'Walk', 'Run', 'WaveHand', 'Jump', 'StompFoot', 'SwayBody', 'Nod', 'ShakeHead',
+      'Walk', 'Run', 'WaveHand', 'Jump', 'StompFoot', 'Nod', 'ShakeHead',
       'TurnToCamera', 'SwingRacket', 'Bow', 'LookAround', 'PointForward', 'ScratchHead',
       'HandsOnHips', 'ClapHands', 'Celebrate', 'Shrug', 'SurprisedJump', 'Tremble',
       'Think', 'SitDown', 'CrossArms', 'FlailArms', 'LookUp', 'ReachOut',

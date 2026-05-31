@@ -272,7 +272,7 @@ npm link dula-engine
 动画和运镜均通过 Registry 模式注册，以类名作为 key。
 
 ### 通用动画 (`animations/common/`)
-`Walk`, `Run`, `WaveHand`, `Jump`, `StompFoot`, `SwayBody`, `Nod`, `ShakeHead`, `TurnToCamera`, `SwingRacket`, `Bow`, `LookAround`, `PointForward`, `ScratchHead`, `HandsOnHips`, `ClapHands`, `Celebrate`, `Shrug`, `SurprisedJump`, `Tremble`, `Think`, `SitDown`, `CrossArms`, `FlailArms`, `LookUp`, `ReachOut`
+`Walk`, `Run`, `WaveHand`, `Jump`, `StompFoot`, `Nod`, `ShakeHead`, `TurnToCamera`, `SwingRacket`, `Bow`, `LookAround`, `PointForward`, `ScratchHead`, `HandsOnHips`, `ClapHands`, `Celebrate`, `Shrug`, `SurprisedJump`, `Tremble`, `Think`, `SitDown`, `CrossArms`, `FlailArms`, `LookUp`, `ReachOut`
 
 ### 哆啦A梦专属 (`animations/doraemon/`)
 `PullOutRacket`, `TakeOutFromPocket`, `Spin`, `PanicSpin`, `NoseBlink`, `Float`, `WaddleWalk`, `ReachHand`
