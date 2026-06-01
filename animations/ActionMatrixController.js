@@ -128,10 +128,20 @@ export class ActionMatrixController {
       this.currentPhase = primary.phase;
     }
 
-    let targetPose = primary.getPoseMatrix(primary.progress);
+    let targetPose = primary.getPoseMatrix(
+      primary.progress,
+      time - primary.startTime,
+      primary.endTime - primary.startTime,
+      time
+    );
     for (let i = 1; i < activeAnims.length; i++) {
       const secondary = activeAnims[i];
-      const secondaryPose = secondary.getPoseMatrix(secondary.progress);
+      const secondaryPose = secondary.getPoseMatrix(
+        secondary.progress,
+        time - secondary.startTime,
+        secondary.endTime - secondary.startTime,
+        time
+      );
       targetPose = this._mergePoses(targetPose, secondaryPose);
     }
 

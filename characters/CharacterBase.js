@@ -63,6 +63,8 @@ export class CharacterBase {
     this.animations = []; // queued animations
     this.moves = [];      // queued position moves
     this.teleportEvents = []; // instantaneous position resets
+    this.allowedBodyAnimations = null; // optional per-character body action allowlist
+    this._blockedAnimationWarnings = new Set();
     // ── Animation blending system ──
     this._poseSnapshot = null;      // snapshot before animation starts
     this._lastAnimEndPose = null;   // pose at end of last animation
@@ -129,6 +131,29 @@ export class CharacterBase {
     }
   }
 
+  canPlayAnimationName(name) {
+    if (!name) return true;
+    if (name.startsWith('Face') || name.startsWith('FX')) return true;
+
+    const allowed = this.allowedBodyAnimations;
+    if (!allowed) return true;
+    if (allowed instanceof Set) return allowed.has(name);
+    if (Array.isArray(allowed)) return allowed.includes(name);
+    return true;
+  }
+
+  canPlayAnimation(animation) {
+    const name = typeof animation === 'string' ? animation : animation?.name;
+    return this.canPlayAnimationName(name);
+  }
+
+  _warnBlockedAnimation(name) {
+    const key = `${this.name}:${name}`;
+    if (this._blockedAnimationWarnings.has(key)) return;
+    this._blockedAnimationWarnings.add(key);
+    console.warn(`[CharacterBase] ${this.name} does not support body animation "${name}"; skipped.`);
+  }
+
   updateEyeTracking(time) {
     if (!this.eyeTracking.active || !this.headGroup) return;
     if (time < this.eyeTracking.startTime || time > this.eyeTracking.endTime) {
@@ -171,6 +196,10 @@ export class CharacterBase {
 
   playAnimation(AnimClass, startTime, duration, options = {}) {
     const anim = new AnimClass(options);
+    if (!this.canPlayAnimation(anim)) {
+      this._warnBlockedAnimation(anim.name);
+      return null;
+    }
     const endTime = startTime + (duration !== undefined ? duration : anim.duration);
 
     // 检测是否为矩阵动画（usePoseMatrix = true）
@@ -183,7 +212,7 @@ export class CharacterBase {
         name: anim.name,
         poseType: anim.poseType || 'idle',
         phase: anim.phase || 'neutral',
-        getPoseMatrix: (t) => anim.getPoseMatrix(t),
+        getPoseMatrix: (t, elapsed, activeDuration, time) => anim.getPoseMatrix(t, elapsed, activeDuration, time),
         startTime,
         endTime,
       });

@@ -62,6 +62,10 @@ export class AnimationBase {
   checkCompatibility(character) {
     const tags = this.tags;
 
+    if (typeof character.canPlayAnimation === 'function' && !character.canPlayAnimation(this)) {
+      return { compatible: false, reason: `Animation "${this.name}" is not enabled for ${character.name}` };
+    }
+
     // Check required body parts
     for (const part of tags.requires || []) {
       if (!character[part]) {
@@ -95,9 +99,12 @@ export class AnimationBase {
   /**
    * 新接口：返回姿势矩阵（usePoseMatrix = true 时必须覆盖）
    * @param {number} t - progress from 0 to 1
+   * @param {number} [elapsed] - elapsed seconds since animation start
+   * @param {number} [duration] - active animation duration in seconds
+   * @param {number} [time] - absolute storyboard time in seconds
    * @returns {PoseMatrix|null} 姿势矩阵（相对基线的偏移量）
    */
-  getPoseMatrix(t) {
+  getPoseMatrix(t, elapsed, duration, time) {
     // override in subclass when usePoseMatrix = true
     return null;
   }

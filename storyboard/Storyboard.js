@@ -162,6 +162,7 @@ export class Storyboard {
             z: ev.options.z,
             action: ev.options.action,
             target: ev.options.target,
+            options: ev.options,
           });
         }
       }
@@ -300,7 +301,7 @@ export class Storyboard {
       'Punch', 'LeftPunch', 'RightPunch', 'LeftRightPunchCombo', 'ComboPunch',
       'Kick', 'SpinKick', 'ArcadeSpinKick', 'JumpFlyingKick', 'Uppercut',
       'LeftHook', 'RightHook',
-      'AirTatsumaki', 'RyuHurricaneKick',
+      'AirTatsumaki', 'RyuHurricaneKick', 'TatsumakiSenpuuKyaku',
       'WeaveStep', 'HurricaneKick', 'DragonPunch', 'BackFist', 'SweepKick', 'KneeStrike',
       'SpiritSwordSwing', 'SpiritGunFire', 'SpiritGunCharge', 'SpiritSwordDraw',
       'JumpAttack', 'DashForward', 'Dodge', 'BoxerGuardHop', 'Block', 'HitStagger',
@@ -356,7 +357,7 @@ export class Storyboard {
     }
 
     // Auto-detect hit pairs and store hitstop data for runtime triggering
-    const ATTACK_ANIMATIONS = ['Punch', 'LeftPunch', 'RightPunch', 'LeftRightPunchCombo', 'SpiritSwordSwing', 'SpiritGunFire', 'ComboPunch', 'Kick', 'SpinKick', 'ArcadeSpinKick', 'JumpFlyingKick', 'HurricaneKick', 'AirTatsumaki', 'DragonPunch', 'BackFist', 'SweepKick', 'KneeStrike'];
+    const ATTACK_ANIMATIONS = ['Punch', 'LeftPunch', 'RightPunch', 'LeftRightPunchCombo', 'SpiritSwordSwing', 'SpiritGunFire', 'ComboPunch', 'Kick', 'SpinKick', 'ArcadeSpinKick', 'JumpFlyingKick', 'HurricaneKick', 'AirTatsumaki', 'RyuHurricaneKick', 'TatsumakiSenpuuKyaku', 'DragonPunch', 'BackFist', 'SweepKick', 'KneeStrike'];
     const REACTION_ANIMATIONS = ['HitStagger', 'Block'];
     for (let i = 0; i < this.entries.length - 1; i++) {
       const entry = this.entries[i];
@@ -364,7 +365,11 @@ export class Storyboard {
       if (!entry.character || !nextEntry.character) continue;
       if (entry.character === nextEntry.character) continue;
       if (!entry.animations || !nextEntry.animations) continue;
-      const hasAttack = entry.animations.some((a) => ATTACK_ANIMATIONS.includes(a));
+      const attackChar = this.characters.get(entry.character);
+      const hasAttack = entry.animations.some((a) =>
+        ATTACK_ANIMATIONS.includes(a) &&
+        (!attackChar?.canPlayAnimationName || attackChar.canPlayAnimationName(a))
+      );
       const hasReaction = nextEntry.animations.some((a) => REACTION_ANIMATIONS.includes(a));
       if (hasAttack && hasReaction) {
         // Store on the entry so we can trigger at the correct time during update
@@ -481,12 +486,12 @@ export class Storyboard {
         const moveAnimName = ev.action || 'Walk';
         const MoveAnimClass = AnimationRegistry[moveAnimName];
         if (MoveAnimClass) {
-          char.playAnimation(MoveAnimClass, ev.startTime, ev.duration || 1.0);
+          char.playAnimation(MoveAnimClass, ev.startTime, ev.duration || 1.0, ev.options || {});
         }
       } else if (ev.type === 'animate') {
         const AnimClass = AnimationRegistry[ev.action];
         if (AnimClass) {
-          char.playAnimation(AnimClass, ev.startTime, ev.duration);
+          char.playAnimation(AnimClass, ev.startTime, ev.duration, ev.options || {});
         }
       } else if (ev.type === 'face') {
         const targetChar = this.characters.get(ev.target);

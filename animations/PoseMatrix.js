@@ -253,6 +253,7 @@ export const ANIM_TO_POSE_TYPE = {
   ComboPunch: PoseType.ACTION,
   SpinKick: PoseType.ACTION,
   RyuHurricaneKick: PoseType.ACTION,
+  TatsumakiSenpuuKyaku: PoseType.ACTION,
   ArcadeSpinKick: PoseType.ACTION,
   JumpAttack: PoseType.ACTION,
   JumpFlyingKick: PoseType.ACTION,
