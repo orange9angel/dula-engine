@@ -1,4 +1,4 @@
-import { PoseMatrix, getPoseType, getDefaultPhase, ActionPhase, PoseType } from './PoseMatrix.js';
+﻿import { PoseMatrix, getPoseType, getDefaultPhase, ActionPhase, PoseType } from './PoseMatrix.js';
 
 /**
  * ActionMatrixController — 运行时动作矩阵控制器（13点关节版）
@@ -170,10 +170,41 @@ export class ActionMatrixController {
 
   _mergePoses(primary, secondary) {
     const result = primary.clone();
-    const joints = ['mouth', 'eyebrows', 'eyelids'];
+    const joints = ['mouth', 'eyebrows', 'eyelids', 'pupils'];
     for (const joint of joints) {
-      if (secondary[joint] && !primary[joint]) {
+      if (secondary[joint] && primary[joint]) {
+        // Both exist — blend with expression priority (0.7)
+        result[joint] = this._blendFaceFeatures(primary[joint], secondary[joint], 0.7);
+      } else if (secondary[joint]) {
         result[joint] = { ...secondary[joint] };
+      }
+    }
+    return result;
+  }
+
+  _blendFaceFeatures(a, b, t) {
+    // Deep blend nested face feature objects
+    const result = {};
+    const keys = new Set([...Object.keys(a || {}), ...Object.keys(b || {})]);
+    for (const key of keys) {
+      const av = a?.[key];
+      const bv = b?.[key];
+      if (av !== null && typeof av === 'object' && bv !== null && typeof bv === 'object') {
+        result[key] = {};
+        const nestedKeys = new Set([...Object.keys(av), ...Object.keys(bv)]);
+        for (const nKey of nestedKeys) {
+          const nav = av?.[nKey] ?? 0;
+          const nbv = bv?.[nKey] ?? 0;
+          if (typeof nav === 'boolean' || typeof nbv === 'boolean') {
+            result[key][nKey] = t >= 0.5 ? (nbv ?? false) : (nav ?? false);
+          } else {
+            result[key][nKey] = nav + (nbv - nav) * t;
+          }
+        }
+      } else if (typeof av === 'number' || typeof bv === 'number') {
+        result[key] = (av ?? 0) + ((bv ?? 0) - (av ?? 0)) * t;
+      } else {
+        result[key] = t >= 0.5 ? bv : av;
       }
     }
     return result;
@@ -229,18 +260,28 @@ export class ActionMatrixController {
 
     const faceBase = this._faceBaseState || {};
 
+    // Set face tension for viseme mouth animation blending
+    if (pose.mouth && pose.mouth.tension !== undefined) {
+      c._faceTension = pose.mouth.tension;
+    } else {
+      c._faceTension = 0;
+    }
+
     if (pose.mouth && c.mouth) {
       const m = pose.mouth;
       const baseM = faceBase.mouth || {};
-      if (m.sx !== undefined) c.mouth.scale.x = (baseM.sx || c.mouthBaseScaleX || 1) * (1 + m.sx);
-      if (m.sy !== undefined) c.mouth.scale.y = (baseM.sy || c.mouthBaseScaleY || 1) * (1 + m.sy);
-      if (m.sz !== undefined) c.mouth.scale.z = (baseM.sz || c.mouthBaseScaleZ || 1) * (1 + m.sz);
-      if (m.px !== undefined) c.mouth.position.x = (baseM.x || c.mouthBasePosX || c.mouth.position.x) + m.px;
-      if (m.py !== undefined) c.mouth.position.y = (baseM.y || c.mouthBasePosY || c.mouth.position.y) + m.py;
-      if (m.pz !== undefined) c.mouth.position.z = (baseM.z || c.mouthBasePosZ || c.mouth.position.z) + m.pz;
-      if (m.rx !== undefined) c.mouth.rotation.x = (baseM.rx || c.mouthBaseRotX || c.mouth.rotation.x) + m.rx;
-      if (m.ry !== undefined) c.mouth.rotation.y = (baseM.ry || c.mouthBaseRotY || c.mouth.rotation.y) + m.ry;
-      if (m.rz !== undefined) c.mouth.rotation.z = (baseM.rz || c.mouthBaseRotZ || c.mouth.rotation.z) + m.rz;
+      // Only apply direct mouth transforms when not speaking (viseme handles speaking mouth)
+      if (!c.isSpeaking) {
+        if (m.sx !== undefined) c.mouth.scale.x = (baseM.sx || c.mouthBaseScaleX || 1) * (1 + m.sx);
+        if (m.sy !== undefined) c.mouth.scale.y = (baseM.sy || c.mouthBaseScaleY || 1) * (1 + m.sy);
+        if (m.sz !== undefined) c.mouth.scale.z = (baseM.sz || c.mouthBaseScaleZ || 1) * (1 + m.sz);
+        if (m.px !== undefined) c.mouth.position.x = (baseM.x || c.mouthBasePosX || c.mouth.position.x) + m.px;
+        if (m.py !== undefined) c.mouth.position.y = (baseM.y || c.mouthBasePosY || c.mouth.position.y) + m.py;
+        if (m.pz !== undefined) c.mouth.position.z = (baseM.z || c.mouthBasePosZ || c.mouth.position.z) + m.pz;
+        if (m.rx !== undefined) c.mouth.rotation.x = (baseM.rx || c.mouthBaseRotX || c.mouth.rotation.x) + m.rx;
+        if (m.ry !== undefined) c.mouth.rotation.y = (baseM.ry || c.mouthBaseRotY || c.mouth.rotation.y) + m.ry;
+        if (m.rz !== undefined) c.mouth.rotation.z = (baseM.rz || c.mouthBaseRotZ || c.mouth.rotation.z) + m.rz;
+      }
     }
 
     if (pose.eyebrows) {

@@ -1,6 +1,10 @@
-import * as THREE from 'three';
+﻿import * as THREE from 'three';
 import { Storyboard } from './storyboard/Storyboard.js';
 import { PostProcessRegistry } from './postprocessing/index.js';
+import * as VisemeMapper from './lib/VisemeMapper.js';
+
+// Expose VisemeMapper globally for CharacterBase viseme-driven mouth animation
+window.VisemeMapper = VisemeMapper;
 
 const width = 1920;
 const height = 1080;

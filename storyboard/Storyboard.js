@@ -10,6 +10,7 @@ import { TransitionRegistry } from '../transitions/index.js';
 import { PostProcessRegistry } from '../postprocessing/index.js';
 import { MusicDirector, MusicCue } from '../lib/MusicDirector.js';
 import { HitstopManager } from '../lib/HitstopManager.js';
+import { generateMouthCue } from '../lib/AudioMouthCue.js';
 
 
 const DEFAULT_TRANSITIONS = {
@@ -34,6 +35,7 @@ export class Storyboard {
     this.audioContext = new (window.AudioContext || window.webkitAudioContext)();
     this.audioDestination = audioDestination;
     this.audioBuffers = new Map(); // index -> AudioBuffer
+    this.mouthCues = new Map(); // index -> audio-derived mouth cue
     this.activeSources = [];
     this.startTime = 0;
     this.isPlaying = false;
@@ -96,6 +98,10 @@ export class Storyboard {
         const arrayBuffer = await resp.arrayBuffer();
         const audioBuffer = await this.audioContext.decodeAudioData(arrayBuffer);
         this.audioBuffers.set(item.index, audioBuffer);
+        const mouthCue = generateMouthCue(audioBuffer);
+        if (mouthCue) {
+          this.mouthCues.set(item.index, mouthCue);
+        }
         if (item.audioDuration) {
           this.audioDurations.set(item.index, item.audioDuration);
         }
@@ -295,7 +301,7 @@ export class Storyboard {
     // Queue animations from SRT entries
     const LOOPING_ANIMATIONS = new Set([
       'Walk', 'Run', 'Swim', 'Tremble', 'FlailArms',
-      'FXEnergyAura', 'FightingStance', 'CounterStance',
+      'FXEnergyAura', 'FightingStance', 'CounterStance', 'Crouch',
     ]);
     const ONE_SHOT_BODY_ANIMS = new Set([
       'Punch', 'LeftPunch', 'RightPunch', 'LeftRightPunchCombo', 'ComboPunch',
@@ -303,40 +309,43 @@ export class Storyboard {
       'LeftHook', 'RightHook',
       'AirTatsumaki', 'RyuHurricaneKick', 'TatsumakiSenpuuKyaku',
       'WeaveStep', 'HurricaneKick', 'DragonPunch', 'BackFist', 'SweepKick', 'KneeStrike',
+      'CrouchJump',
       'SpiritSwordSwing', 'SpiritGunFire', 'SpiritGunCharge', 'SpiritSwordDraw',
       'JumpAttack', 'DashForward', 'Dodge', 'BoxerGuardHop', 'Block', 'HitStagger',
       'Knockdown', 'GetUp', 'PointForward', 'CrossArms', 'Nod',
       'Shrug', 'LookAround', 'Celebrate', 'WaveHand', 'TurnToCamera',
     ]);
     for (const entry of this.entries) {
-      if (entry.character && entry.animations && entry.animations.length > 0) {
-        const char = this.characters.get(entry.character);
-        if (char) {
-          const entryDuration = entry.endTime - entry.startTime;
-          const animationCues = entry.animationCues || entry.animations.map((name) => ({ name, options: {} }));
-          for (const cue of animationCues) {
-            const animName = cue.name;
-            const animOptions = cue.options || {};
-            const AnimClass = AnimationRegistry[animName];
-            if (AnimClass) {
-              const inst = new AnimClass(animOptions);
-              const optionDuration = Number(animOptions.duration);
-              const cueDuration = Number.isFinite(optionDuration) && optionDuration > 0 ? optionDuration : undefined;
-              const isLooping = LOOPING_ANIMATIONS.has(animName);
-              const isFX = animName.startsWith('FX');
-              const isOneShotBody = ONE_SHOT_BODY_ANIMS.has(animName);
-              // CRITICAL FIX: One-shot body animations NEVER stretch.
-              // They play at natural speed, then hold final pose.
-              // Only looping anims and FX stretch to fill entry duration.
-              if (isLooping || isFX) {
-                char.playAnimation(AnimClass, entry.startTime, cueDuration ?? entryDuration, animOptions);
-              } else if (isOneShotBody) {
-                // Natural duration unless the story tag explicitly sets duration.
-                char.playAnimation(AnimClass, entry.startTime, cueDuration, animOptions);
-              } else {
-                // Facial expressions and misc: stretch to entry duration
-                char.playAnimation(AnimClass, entry.startTime, cueDuration ?? entryDuration, animOptions);
-              }
+      if (entry.animations && entry.animations.length > 0) {
+        const entryDuration = entry.endTime - entry.startTime;
+        const animationCues = entry.animationCues || entry.animations.map((name) => ({ name, options: {} }));
+        for (const cue of animationCues) {
+          const animName = cue.name;
+          const animOptions = cue.options || {};
+          const characterName = cue.character || animOptions.character || entry.character;
+          if (!characterName) continue;
+          const char = this.characters.get(characterName);
+          if (!char) continue;
+
+          const AnimClass = AnimationRegistry[animName];
+          if (AnimClass) {
+            const inst = new AnimClass(animOptions);
+            const optionDuration = Number(animOptions.duration);
+            const cueDuration = Number.isFinite(optionDuration) && optionDuration > 0 ? optionDuration : undefined;
+            const isLooping = LOOPING_ANIMATIONS.has(animName);
+            const isFX = animName.startsWith('FX');
+            const isOneShotBody = ONE_SHOT_BODY_ANIMS.has(animName);
+            // CRITICAL FIX: One-shot body animations NEVER stretch.
+            // They play at natural speed, then hold final pose.
+            // Only looping anims and FX stretch to fill entry duration.
+            if (isLooping || isFX) {
+              char.playAnimation(AnimClass, entry.startTime, cueDuration ?? entryDuration, animOptions);
+            } else if (isOneShotBody) {
+              // Natural duration unless the story tag explicitly sets duration.
+              char.playAnimation(AnimClass, entry.startTime, cueDuration, animOptions);
+            } else {
+              // Facial expressions and misc: stretch to entry duration
+              char.playAnimation(AnimClass, entry.startTime, cueDuration ?? entryDuration, animOptions);
             }
           }
         }
@@ -1042,22 +1051,37 @@ export class Storyboard {
         // console.log('[update t=' + t.toFixed(2) + '] chars in', this.currentSceneName, ':', this.currentScene.characters.map(c => c.constructor.name).join(','));
       }
 
-      // Character speaking states - only speak if there's actual audio/subtitle
-      for (const char of this.characters.values()) {
-        char.stopSpeaking();
-      }
+      // Character speaking states - only restart lip-sync when the active
+      // dialogue changes. Resetting every frame breaks viseme smoothing.
+      const activeSpeakers = new Set();
       for (const entry of this.entries) {
-        if (entry.character && t >= entry.startTime && t <= entry.endTime) {
-          const char = this.characters.get(entry.character);
-          if (char) {
-            const slotDuration = entry.endTime - entry.startTime;
-            const audioDur = this.audioDurations.get(entry.index);
-            // Only speak if there's actual audio duration (real voice/subtitle)
-            if (audioDur && audioDur > 0) {
-              const speakDuration = Math.min(audioDur + 0.15, slotDuration);
-              char.speak(entry.startTime, speakDuration);
-            }
+        if (!entry.character) continue;
+
+        const char = this.characters.get(entry.character);
+        if (!char) continue;
+
+        const audioDur = this.audioDurations.get(entry.index);
+        // Only speak if there's actual audio duration (real voice/subtitle)
+        if (!audioDur || audioDur <= 0) continue;
+
+        const speakDuration = Math.max(0.05, audioDur + 0.15);
+        const speechEndTime = Math.max(entry.endTime, entry.startTime + speakDuration);
+        if (t >= entry.startTime && t <= speechEndTime) {
+          activeSpeakers.add(entry.character);
+
+          const dialogueText = entry.dialogue || entry.text || '';
+          const mouthCue = this.mouthCues.get(entry.index) || null;
+          const speakKey = `${entry.index}:${entry.startTime}:${speakDuration}:${dialogueText}:${mouthCue ? mouthCue.frames.length : 0}`;
+          if (!char.isSpeaking || char._activeSpeakKey !== speakKey) {
+            char.speak(entry.startTime, speakDuration, dialogueText, mouthCue);
+            char._activeSpeakKey = speakKey;
           }
+        }
+      }
+      for (const [name, char] of this.characters) {
+        if (!activeSpeakers.has(name) && char.isSpeaking) {
+          char._activeSpeakKey = null;
+          char.stopSpeaking();
         }
       }
 

@@ -1,6 +1,7 @@
 import * as THREE from 'three';
 import { ActionMatrixController } from '../animations/ActionMatrixController.js';
 import { RigAdapter } from '../rigging/RigAdapter.js';
+import { applyMouthCueToShape, sampleMouthCue } from '../lib/AudioMouthCue.js';
 
 /**
  * Character archetype tags for animation compatibility.
@@ -60,6 +61,13 @@ export class CharacterBase {
     this.isSpeaking = false;
     this.speakStartTime = 0;
     this.speakEndTime = 0;
+    this.speakText = '';
+    this.visemeSequence = [];
+    // -- Auto blink system --
+    this.blinkTimer = Math.random() * 3 + 2; // 2~5s first blink
+    this.blinkState = 'open'; // open, closing, closed, opening
+    this.blinkProgress = 0;
+    this.blinkDuration = 0.2;
     this.animations = []; // queued animations
     this.moves = [];      // queued position moves
     this.teleportEvents = []; // instantaneous position resets
@@ -101,14 +109,25 @@ export class CharacterBase {
     RigAdapter.adapt(this);
   }
 
-  speak(startTime, duration) {
+  speak(startTime, duration, text = '', mouthCue = null) {
     this.isSpeaking = true;
     this.speakStartTime = startTime;
     this.speakEndTime = startTime + duration;
+    this.speakText = text;
+    this.mouthCue = mouthCue;
+    // Generate viseme sequence from text
+    if (text && typeof window !== 'undefined' && window.VisemeMapper) {
+      this.visemeSequence = window.VisemeMapper.generateVisemeSequence(text, startTime, duration);
+    } else {
+      this.visemeSequence = [];
+    }
   }
 
   stopSpeaking() {
     this.isSpeaking = false;
+    this.speakText = '';
+    this.visemeSequence = [];
+    this.mouthCue = null;
     if (this.mouth) {
       this.mouth.scale.set(this.mouthBaseScaleX, this.mouthBaseScaleY, this.mouthBaseScaleZ);
     }
@@ -258,6 +277,9 @@ export class CharacterBase {
         this.animateBody(time, delta);
       }
     }
+
+    // Auto blink (runs even when not speaking)
+    this._updateBlink(delta);
 
     // Eye / head tracking
     this.updateEyeTracking(time);
@@ -449,42 +471,100 @@ export class CharacterBase {
     }
   }
 
+  getCurrentMouthShape(time) {
+    let shape;
+    if (this.visemeSequence.length > 0 && typeof window !== 'undefined' && window.VisemeMapper) {
+      if (window.VisemeMapper.getMouthShapeFromSequence) {
+        shape = window.VisemeMapper.getMouthShapeFromSequence(this.visemeSequence, time);
+      } else {
+        shape = window.VisemeMapper.getMouthShape(
+          this.speakText,
+          this.speakStartTime,
+          this.speakEndTime - this.speakStartTime,
+          time
+        );
+      }
+    } else {
+      // Fallback to sine wave when no viseme data
+      const factor = Math.abs(Math.sin(time * 12));
+      shape = { lipHeight: 0.4 + 0.2 * factor, lipWidth: 1.0, jawOpen: 0.2 * factor };
+    }
+
+    const cueSample = this.mouthCue ? sampleMouthCue(this.mouthCue, time - this.speakStartTime) : null;
+    this._currentMouthShape = applyMouthCueToShape(shape, cueSample);
+    return this._currentMouthShape;
+  }
+
   animateMouth(time, delta) {
     if (!this.mouth) return;
     this.mouth.visible = true;
-    const speed = 12;
-    const factor = Math.abs(Math.sin(time * speed));
 
-    // Detect mouth geometry type by checking constructor name
-    const geoType = this.mouth.geometry?.type || 'Unknown';
+    const shape = this.getCurrentMouthShape(time);
+
+    // Apply expression tension from active face animation
+    const tension = this._faceTension || 0;
+    const tensionScale = 1.0 - tension * 0.25;
+
+    // Detect mouth geometry type — handle Mesh wrapper (Group children)
+    let geoType = this.mouth.geometry?.type || 'Unknown';
+    // If mouth is a Mesh wrapping another geometry (e.g. TubeGeometry inside a Group),
+    // fall through to the default TubeGeometry path which is safest for smile curves
+    if (geoType === 'Mesh') {
+      geoType = 'TubeGeometry';
+    }
 
     if (geoType === 'ConeGeometry') {
-      // ConeGeometry (jaw): use rotation to simulate opening/closing
-      // Closed: rotation.x = Math.PI (inverted, pointing up)
-      // Open: rotate slightly to drop the jaw down
       const baseRot = this.mouthBaseRotationX !== undefined ? this.mouthBaseRotationX : Math.PI;
-      const jawOpen = 0.3 * factor; // max 0.3 rad (~17°) opening
+      const jawOpen = shape.jawOpen * tensionScale;
       this.mouth.rotation.x = baseRot - jawOpen;
     } else if (geoType === 'SphereGeometry') {
-      // SphereGeometry (ellipse mouth like Doraemon): scale Y more aggressively
-      // since the base scale is small (e.g., 0.3), we need larger relative change
-      // Y scale: base → base * 1.8 (open) for visible but not extreme animation
-      const openness = this.mouthBaseScaleY * (1.0 + 0.8 * factor);
-      this.mouth.scale.y = openness;
-      // Slight X shrink to maintain ellipse shape
-      this.mouth.scale.x = this.mouthBaseScaleX * (1.0 - 0.2 * factor);
+      // Legacy sphere mouth: map new lip params to old scale params
+      const scaleY = 1.0 + shape.lipHeight * 0.8;
+      const scaleX = shape.lipWidth;
+      this.mouth.scale.y = this.mouthBaseScaleY * scaleY * tensionScale;
+      this.mouth.scale.x = this.mouthBaseScaleX * scaleX;
       this.mouth.scale.z = this.mouthBaseScaleZ;
-      // Also move mouth down slightly when opening to simulate jaw drop
       if (this.mouthBaseY !== undefined) {
-        this.mouth.position.y = this.mouthBaseY - 0.05 * factor;
+        const openFactor = (scaleY - 1.0) / 0.8;
+        this.mouth.position.y = this.mouthBaseY - 0.05 * Math.max(0, openFactor);
+      }
+    } else if (geoType === 'Unknown' && this.mouth.type === 'Group') {
+      // Jaw-pivot style mouth (Group with lower lip that rotates open)
+      // + upper lip that scales for width variation
+      const jawOpen = shape.jawOpen * tensionScale;
+      // Use multiplicative scaling relative to base shape for more dramatic variation
+      const lipWidth = shape.lipWidth;
+      const lipHeight = shape.lipHeight * tensionScale;
+
+      // Lower lip (jaw) rotation for opening
+      const baseRot = this.mouthBaseRotationX !== undefined ? this.mouthBaseRotationX : 0;
+      this.mouth.rotation.x = baseRot + jawOpen;
+
+      // Scale lower lip width and height (multiplicative for dramatic effect)
+      const lowerLip = this.mouth.children[0];
+      if (lowerLip) {
+        lowerLip.scale.x = lipWidth;
+        lowerLip.scale.y = lipHeight;
+      }
+
+      // Scale upper lip width and height
+      if (this.upperLip) {
+        this.upperLip.scale.x = lipWidth;
+        this.upperLip.scale.y = lipHeight * 0.85; // upper lip slightly thinner
+      }
+
+      // Scale mouth cavity width and height
+      if (this.mouthCavity) {
+        this.mouthCavity.scale.x = lipWidth * 0.9;
+        const openFactor = 1.0 + jawOpen * 2.5;
+        this.mouthCavity.scale.y = 0.6 * openFactor;
       }
     } else {
-      // TubeGeometry (smile curve) and others: use gentle Y scale
-      // Y scale: 1.0 (closed) → 1.15 (open)
-      const openness = this.mouthBaseScaleY * (1.0 + 0.15 * factor);
-      this.mouth.scale.y = openness;
-      // No x/z expansion — prevents lip from sliding off face
-      this.mouth.scale.x = this.mouthBaseScaleX;
+      // Default fallback
+      const scaleY = 1.0 + shape.lipHeight * 0.8;
+      const scaleX = shape.lipWidth;
+      this.mouth.scale.y = this.mouthBaseScaleY * scaleY * tensionScale;
+      this.mouth.scale.x = this.mouthBaseScaleX * scaleX;
       this.mouth.scale.z = this.mouthBaseScaleZ;
     }
   }
@@ -493,6 +573,71 @@ export class CharacterBase {
     if (!this.headGroup) return;
     // Disabled — no head movement during speaking for clean motion demo
     // this.headGroup.rotation.x = Math.sin(time * 6) * 0.025;
+  }
+
+  /**
+   * Auto blink system — runs independently of speaking state
+   */
+  _updateBlink(delta) {
+    // Skip if manual FaceBlink animation is active
+    const hasManualBlink = this.animations.some(a =>
+      a.instance.name === 'FaceBlink' &&
+      performance.now() / 1000 >= a.startTime &&
+      performance.now() / 1000 <= a.endTime
+    );
+    if (hasManualBlink) {
+      this.blinkTimer = Math.random() * 3 + 2;
+      return;
+    }
+
+    this.blinkTimer -= delta;
+
+    switch (this.blinkState) {
+      case 'open':
+        if (this.blinkTimer <= 0) {
+          this.blinkState = 'closing';
+          this.blinkProgress = 0;
+        }
+        break;
+      case 'closing':
+        this.blinkProgress += delta / (this.blinkDuration * 0.4);
+        if (this.blinkProgress >= 1) {
+          this.blinkState = 'opening';
+          this.blinkProgress = 1;
+        }
+        this._applyBlink(this.blinkProgress);
+        break;
+      case 'opening':
+        this.blinkProgress -= delta / (this.blinkDuration * 0.6);
+        if (this.blinkProgress <= 0) {
+          this.blinkState = 'open';
+          this.blinkProgress = 0;
+          this.blinkTimer = Math.random() * 4 + 2; // 2~6s next blink
+        }
+        this._applyBlink(this.blinkProgress);
+        break;
+    }
+  }
+
+  _applyBlink(factor) {
+    // factor: 0=open, 1=closed
+    if (this.leftEyelid) {
+      this.leftEyelid.visible = true;
+      this.leftEyelid.scale.y = 1 - factor * 0.95;
+    }
+    if (this.rightEyelid) {
+      this.rightEyelid.visible = true;
+      this.rightEyelid.scale.y = 1 - factor * 0.95;
+    }
+    // Subtle pupil shrink during blink
+    if (this.leftPupil) {
+      const pupilScale = 1 - factor * 0.3;
+      this.leftPupil.scale.set(pupilScale, pupilScale, pupilScale);
+    }
+    if (this.rightPupil) {
+      const pupilScale = 1 - factor * 0.3;
+      this.rightPupil.scale.set(pupilScale, pupilScale, pupilScale);
+    }
   }
 
   setPosition(x, y, z) {

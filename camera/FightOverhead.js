@@ -30,11 +30,14 @@ export class FightOverhead extends CameraMoveBase {
     super.start(camera, context);
     this.startPos = camera.position.clone();
     this._computeTarget(context);
+    if (!this.endPos) this.endPos = new THREE.Vector3(0, this.height, 0);
+    if (!this.lookAtPos) this.lookAtPos = new THREE.Vector3(0, 0.5, 0);
   }
 
   update(t, camera, context) {
     this._computeTarget(context);
 
+    if (!this.endPos || !this.lookAtPos) return;
     const eased = t < 0.5 ? 2 * t * t : -1 + (4 - 2 * t) * t;
     const desiredPos = new THREE.Vector3().lerpVectors(this.startPos, this.endPos, eased);
     camera.position.copy(desiredPos);

@@ -1,4 +1,4 @@
-import { InspectorBase } from './InspectorBase.js';
+﻿import { InspectorBase } from './InspectorBase.js';
 import fs from 'fs';
 import path from 'path';
 
@@ -72,7 +72,8 @@ export class SpeakingAnimationInspector extends InspectorBase {
       }
 
       // 检查几何体类型是否被支持
-      const supportedGeos = ['ConeGeometry', 'SphereGeometry', 'TubeGeometry'];
+      // Mesh is also valid — it's often a wrapper for TubeGeometry (smile curve mouths)
+      const supportedGeos = ['ConeGeometry', 'SphereGeometry', 'TubeGeometry', 'Mesh'];
       if (!supportedGeos.includes(info.geoType)) {
         this.addIssue('warning',
           `角色 ${charName} 的嘴部使用 ${info.geoType}，但 CharacterBase.animateMouth() 仅支持 ${supportedGeos.join('/')}. 嘴部动画可能异常或无效`,

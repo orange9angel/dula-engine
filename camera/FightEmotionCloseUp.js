@@ -29,6 +29,8 @@ export class FightEmotionCloseUp extends CameraMoveBase {
     super.start(camera, context);
     this.startPos = camera.position.clone();
     this._computeTarget(context);
+    if (!this.endPos) this.endPos = new THREE.Vector3(0, this.height, 0.8);
+    if (!this.lookAtPos) this.lookAtPos = new THREE.Vector3(0, 1.5, 0);
   }
 
   update(t, camera, context) {
@@ -40,6 +42,7 @@ export class FightEmotionCloseUp extends CameraMoveBase {
     const driftY = Math.cos(this._phase * 0.7) * this.drift * 0.5 * (1 - t * 0.5);
     this._phase += 0.02;
 
+    if (!this.endPos || !this.lookAtPos) return;
     const desiredPos = new THREE.Vector3().lerpVectors(this.startPos, this.endPos, eased);
     desiredPos.x += driftX;
     desiredPos.y += driftY;

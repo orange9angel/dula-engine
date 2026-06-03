@@ -31,10 +31,13 @@ export class FightDramaticReveal extends CameraMoveBase {
   start(camera, context) {
     super.start(camera, context);
     this._computeTarget(context);
+    if (!this._charPos) this._charPos = new THREE.Vector3(0, 0, 0);
+    if (!this._camSide) this._camSide = -1;
   }
 
   update(t, camera, context) {
     this._computeTarget(context);
+    if (!this._charPos || !this._camSide) return;
 
     // 运动曲线：快速推进 -> 缓停 -> 微震
     let progress;

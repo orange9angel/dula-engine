@@ -214,11 +214,13 @@ server.listen(PORT, async () => {
     if (!expectedTotalFrames) {
       return `frame=${String(absFrame).padStart(5)} fps=${renderFps.toFixed(1)}`;
     }
-    const progress = (idx / expectedTotalFrames * 100).toFixed(1);
+    // idx is relative to the segment (1-based), frameOffset is the absolute offset
+    const relIdx = idx;
+    const progress = (relIdx / expectedTotalFrames * 100).toFixed(1);
     const barLen = 30;
-    const filled = Math.round(idx / expectedTotalFrames * barLen);
+    const filled = Math.max(0, Math.min(barLen, Math.round(relIdx / expectedTotalFrames * barLen)));
     const bar = '█'.repeat(filled) + '░'.repeat(barLen - filled);
-    const eta = (expectedTotalFrames - idx) / renderFps;
+    const eta = (expectedTotalFrames - relIdx) / renderFps;
     const etaMin = Math.floor(eta / 60);
     const etaSec = Math.floor(eta % 60);
     return `frame=${String(absFrame).padStart(5)}/${String(expectedTotalFrames + frameOffset).padStart(5)} fps=${renderFps.toFixed(1)} ${bar} ${progress}% ETA ${etaMin}m${etaSec.toString().padStart(2,'0')}s`;
