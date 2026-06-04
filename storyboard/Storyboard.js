@@ -51,6 +51,7 @@ export class Storyboard {
     this.hitstopManager = new HitstopManager();
     this.combatDirector = null;
     this.cinematicAdapter = null;
+    this.sceneDirector = null;
     this.timeScaleEvents = []; // { startTime, endTime, scale }
   }
 
@@ -529,6 +530,24 @@ export class Storyboard {
 
     // CombatDirector: initialize and process combat tags
     this._setupCombatDirector();
+
+    // SceneDirector: initialize and process scene director tags
+    this._setupSceneDirector();
+
+    // Apply initial SceneDirector formation immediately (at t=0) so characters
+    // start in the correct positions instead of arrangeCharacters defaults
+    if (this.sceneDirector && this.sceneDirector.formations.length > 0) {
+      const initialFormation = this.sceneDirector.formations[0];
+      if (initialFormation.startTime <= 0) {
+        this.sceneDirector.applyFormationNow(
+          initialFormation.type,
+          initialFormation.center,
+          initialFormation.radius,
+          initialFormation.focusChar,
+          initialFormation.options
+        );
+      }
+    }
   }
 
   switchScene(sceneName, skipArrange = false, currentTime = null) {
@@ -550,8 +569,10 @@ export class Storyboard {
       if (scenes && scenes.has(sceneName)) {
         newScene.addCharacter(char);
         // Clear pending moves from previous scenes so they don't override placement
+        // Only clear moves that end before or at the current time; preserve future moves
         if (char.moves) {
-          char.moves = [];
+          const now = currentTime !== null ? currentTime : 0;
+          char.moves = char.moves.filter(m => m.endTime > now + 0.1);
         }
         // Reset rotation to upright when entering a new scene
         // (prevents flipped characters from previous scene animations/moves)
@@ -559,6 +580,9 @@ export class Storyboard {
           char.mesh.rotation.x = 0;
           char.mesh.rotation.z = 0;
         }
+        // Clear inCombat flag when switching scenes
+        if (char.userData) char.userData.inCombat = false;
+        if (char.mesh && char.mesh.userData) char.mesh.userData.inCombat = false;
       }
     }
 
@@ -1360,7 +1384,12 @@ export class Storyboard {
     } else if (this.combatDirector) {
       this.combatDirector.update(t);
     }
-    
+
+    // SceneDirector: update formations and character facing
+    if (this.sceneDirector) {
+      this.sceneDirector.update(t);
+    }
+
     // ProjectileSystem: update all flying projectiles
     if (this.combatDirector && this.combatDirector.projectileSystem) {
       const scene = this.currentScene ? this.currentScene.scene : null;
@@ -1759,6 +1788,57 @@ export class Storyboard {
                 options.priority ?? 15
               );
             }
+            break;
+          }
+        }
+      }
+    }
+  }
+
+  /**
+   * Initialize SceneDirector and process scene director tags from .story entries.
+   */
+  _setupSceneDirector() {
+    const SceneDirectorClass = DirectorRegistry['SceneDirector'];
+    if (!SceneDirectorClass) return;
+
+    this.sceneDirector = new SceneDirectorClass(this);
+
+    // Parse SceneDirector tags from entries
+    for (const entry of this.entries) {
+      if (!entry.sceneDirector || entry.sceneDirector.length === 0) continue;
+
+      for (const sdTag of entry.sceneDirector) {
+        const { name, options } = sdTag;
+        const startTime = entry.startTime;
+
+        switch (name) {
+          case 'Formation': {
+            const type = options.type || 'semicircle';
+            let center = { x: 0, y: 0.01, z: 0 };
+            if (options.center) {
+              const centerStr = String(options.center);
+              const centerParts = centerStr.split(',').map(s => parseFloat(s.trim()));
+              center = {
+                x: centerParts[0] || 0,
+                y: centerParts[1] !== undefined ? centerParts[1] : 0.01,
+                z: centerParts[2] !== undefined ? centerParts[2] : 0,
+              };
+            }
+            const radius = options.radius !== undefined ? parseFloat(options.radius) : 4;
+            const focusChar = options.focus || options.focusChar || null;
+            this.sceneDirector.scheduleFormation(type, center, radius, focusChar, startTime, options);
+            break;
+          }
+          case 'Gaze': {
+            const mode = options.mode || 'auto';
+            const target = options.target || null;
+            const duration = options.duration !== undefined ? parseFloat(options.duration) : 0;
+            const gazeOptions = { ...options };
+            if (options.groups) {
+              gazeOptions.groups = String(options.groups).split(';').map(g => g.split(',').map(s => s.trim()));
+            }
+            this.sceneDirector.scheduleGaze(mode, target, startTime, duration, gazeOptions);
             break;
           }
         }
