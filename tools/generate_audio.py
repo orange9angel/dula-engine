@@ -166,7 +166,9 @@ def infer_emotion(dialogue, character=None):
 
 
 def load_tennis_hit_times():
-    """Derive SFX timings from choreography ball events; fallback to defaults."""
+    """Derive SFX timings from choreography ball events; return empty if no choreography."""
+    if not os.path.exists(CHOREOGRAPHY_PATH):
+        return []
     try:
         with open(CHOREOGRAPHY_PATH, "r", encoding="utf-8") as f:
             choreo = json.load(f)
@@ -174,7 +176,7 @@ def load_tennis_hit_times():
         ball_events = park.get("ballEvents", [])
         return [ev["startTime"] for ev in ball_events if "startTime" in ev]
     except Exception:
-        return [30.0, 32.5]
+        return []
 
 
 def parse_story(text):
@@ -1086,8 +1088,14 @@ async def generate(force_tts=False):
             if emotion:
                 source = "tag" if entry.get("emotion") else "auto"
                 emotion_label = f" [{emotion}:{source}]"
+            # Preprocess dialogue for TTS: remove commas/periods from specific
+            # phrases to prevent edge-tts from splitting into multiple segments
+            TTS_PREPROCESSOR = {
+                "第一节，伸展运动。": "第一节伸展运动",
+            }
+            tts_text = TTS_PREPROCESSOR.get(dialogue, dialogue)
             communicate = edge_tts.Communicate(
-                text=dialogue,
+                text=tts_text,
                 voice=voice,
                 rate=params.get("rate", "+0%"),
                 pitch=params.get("pitch", "+0Hz"),

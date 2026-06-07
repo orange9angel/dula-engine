@@ -1,4 +1,5 @@
 ﻿import { PoseMatrix, getPoseType, getDefaultPhase, ActionPhase, PoseType } from './PoseMatrix.js';
+import { JointConstraintSystem } from '../constraints/JointConstraintSystem.js';
 
 /**
  * ActionMatrixController — 运行时动作矩阵控制器（13点关节版）
@@ -36,6 +37,10 @@ export class ActionMatrixController {
     this._baselinePose = null;
     this._lastAppliedPose = PoseMatrix.zero();
     this._faceBaseState = null;
+
+    // ── Joint Constraint System ──
+    // 三层约束保护：速度平滑 → 关节硬限制 → 防穿模
+    this._constraintSystem = new JointConstraintSystem(character);
   }
 
   captureBaseline() {
@@ -45,6 +50,8 @@ export class ActionMatrixController {
     const captureRot = (obj) => obj ? { rx: obj.rotation.x, ry: obj.rotation.y, rz: obj.rotation.z } : null;
 
     this._baselinePose.headGroup = captureRot(c.headGroup);
+    this._baselinePose.rightClavicle = captureRot(c.rightClavicle);
+    this._baselinePose.leftClavicle = captureRot(c.leftClavicle);
     this._baselinePose.rightShoulder = captureRot(c.rightArm);
     this._baselinePose.rightElbow = captureRot(c.rightElbow);
     this._baselinePose.rightElbowTwist = captureRot(c.rightElbowTwist);
@@ -95,6 +102,10 @@ export class ActionMatrixController {
     this._matrixAnims = [];
     this.currentPose = PoseMatrix.zero();
     this._inTransition = false;
+    // 重置约束系统，避免速度平滑器跨动画累积
+    if (this._constraintSystem) {
+      this._constraintSystem.reset();
+    }
   }
 
   update(time, delta) {
@@ -111,7 +122,7 @@ export class ActionMatrixController {
     }
 
     if (activeAnims.length === 0) {
-      this._applyIdlePose(time);
+      this._applyIdlePose(time, delta);
       this.currentPhase = ActionPhase.NEUTRAL;
       this.currentPoseType = PoseType.IDLE;
       this.currentAction = null;
@@ -122,7 +133,9 @@ export class ActionMatrixController {
     const primary = activeAnims[0];
 
     if (this.currentAction !== primary.name) {
-      this._startTransition(this.currentPose, PoseMatrix.zero(), primary.startTime);
+      // 从当前姿态过渡到动画的初始姿态（t=0时的姿态），而不是zero pose
+      const initialPose = primary.getPoseMatrix(0, 0, primary.endTime - primary.startTime, primary.startTime);
+      this._startTransition(this.currentPose, initialPose, primary.startTime);
       this.currentAction = primary.name;
       this.currentPoseType = primary.poseType;
       this.currentPhase = primary.phase;
@@ -158,6 +171,10 @@ export class ActionMatrixController {
 
     this.currentPose = finalPose;
     this._applyPose(finalPose);
+    // 应用关节约束（速度平滑 + 硬限制 + 防穿模）
+    if (this._constraintSystem) {
+      this._constraintSystem.enforce(delta);
+    }
     this._lastAppliedPose = finalPose.clone();
   }
 
@@ -223,6 +240,8 @@ export class ActionMatrixController {
     };
 
     apply(c.headGroup, base.headGroup, pose.headGroup || {});
+    apply(c.rightClavicle, base.rightClavicle, pose.rightClavicle || {});
+    apply(c.leftClavicle, base.leftClavicle, pose.leftClavicle || {});
     apply(c.rightArm, base.rightShoulder, pose.rightShoulder || {});
     apply(c.rightElbow, base.rightElbow, pose.rightElbow || {});
     apply(c.rightElbowTwist, base.rightElbowTwist, pose.rightElbowTwist || {});
@@ -339,7 +358,7 @@ export class ActionMatrixController {
     }
   }
 
-  _applyIdlePose(time) {
+  _applyIdlePose(time, delta = 0.016) {
     const c = this.character;
     const base = this._baselinePose;
     if (!base) return;
@@ -358,6 +377,9 @@ export class ActionMatrixController {
       idlePose.mesh = {};
     }
     idlePose.headGroup = { rx: 0, ry: 0, rz: 0 };
+    // Idle arm pose: elbow zero keeps the forearm aligned with the upper arm.
+    idlePose.rightElbow = { rx: 0, ry: 0, rz: 0 };
+    idlePose.leftElbow = { rx: 0, ry: 0, rz: 0 };
     // Reset facial features to base state (prevent mouth/eyebrow drift)
     idlePose.mouth = { sx: 0, sy: 0, sz: 0, px: 0, py: 0, pz: 0, rx: 0, ry: 0, rz: 0 };
     idlePose.eyebrows = {
@@ -370,6 +392,10 @@ export class ActionMatrixController {
     };
 
     this._applyPose(idlePose);
+    // 应用关节约束
+    if (this._constraintSystem) {
+      this._constraintSystem.enforce(delta);
+    }
     this._lastAppliedPose = idlePose.clone();
     this.currentPose = idlePose.clone();
   }

@@ -25,6 +25,8 @@ export class PoseMatrix {
   constructor() {
     // 13个控制点 + 躯干
     this.headGroup = null;
+    this.rightClavicle = null;
+    this.leftClavicle = null;
     this.rightShoulder = null;
     this.rightElbow = null;
     this.rightElbowTwist = null;
@@ -60,7 +62,8 @@ export class PoseMatrix {
   static lerp(a, b, t) {
     const result = new PoseMatrix();
     const joints = [
-      'headGroup', 'rightShoulder', 'rightElbow', 'rightElbowTwist', 'rightWrist',
+      'headGroup', 'rightClavicle', 'leftClavicle',
+      'rightShoulder', 'rightElbow', 'rightElbowTwist', 'rightWrist',
       'leftShoulder', 'leftElbow', 'leftElbowTwist', 'leftWrist',
       'rightHip', 'rightKnee', 'rightAnkle',
       'leftHip', 'leftKnee', 'leftAnkle',
@@ -110,7 +113,8 @@ export class PoseMatrix {
   static add(a, b) {
     const result = new PoseMatrix();
     const joints = [
-      'headGroup', 'rightShoulder', 'rightElbow', 'rightElbowTwist', 'rightWrist',
+      'headGroup', 'rightClavicle', 'leftClavicle',
+      'rightShoulder', 'rightElbow', 'rightElbowTwist', 'rightWrist',
       'leftShoulder', 'leftElbow', 'leftElbowTwist', 'leftWrist',
       'rightHip', 'rightKnee', 'rightAnkle',
       'leftHip', 'leftKnee', 'leftAnkle',
@@ -150,7 +154,8 @@ export class PoseMatrix {
   static scale(pose, s) {
     const result = new PoseMatrix();
     const joints = [
-      'headGroup', 'rightShoulder', 'rightElbow', 'rightElbowTwist', 'rightWrist',
+      'headGroup', 'rightClavicle', 'leftClavicle',
+      'rightShoulder', 'rightElbow', 'rightElbowTwist', 'rightWrist',
       'leftShoulder', 'leftElbow', 'leftElbowTwist', 'leftWrist',
       'rightHip', 'rightKnee', 'rightAnkle',
       'leftHip', 'leftKnee', 'leftAnkle',
@@ -176,7 +181,8 @@ export class PoseMatrix {
 
   isEmpty() {
     const joints = [
-      'headGroup', 'rightShoulder', 'rightElbow', 'rightElbowTwist', 'rightWrist',
+      'headGroup', 'rightClavicle', 'leftClavicle',
+      'rightShoulder', 'rightElbow', 'rightElbowTwist', 'rightWrist',
       'leftShoulder', 'leftElbow', 'leftElbowTwist', 'leftWrist',
       'rightHip', 'rightKnee', 'rightAnkle',
       'leftHip', 'leftKnee', 'leftAnkle',
@@ -188,7 +194,8 @@ export class PoseMatrix {
   clone() {
     const result = new PoseMatrix();
     const joints = [
-      'headGroup', 'rightShoulder', 'rightElbow', 'rightWrist',
+      'headGroup', 'rightClavicle', 'leftClavicle',
+      'rightShoulder', 'rightElbow', 'rightWrist',
       'leftShoulder', 'leftElbow', 'leftWrist',
       'rightHip', 'rightKnee', 'rightAnkle',
       'leftHip', 'leftKnee', 'leftAnkle',

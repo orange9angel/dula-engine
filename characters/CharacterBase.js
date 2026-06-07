@@ -23,12 +23,14 @@ export class CharacterBase {
     this.mouthBaseScaleY = 1;
     this.mouthBaseScaleZ = 1;
     this.headGroup = null;
+    this.rightClavicle = null; // 右锁骨/肩胛骨Group（控制手臂前后摆动）
+    this.leftClavicle = null;  // 左锁骨/肩胛骨Group
     this.rightArm = null;      // 右肩/上臂根Group
     this.leftArm = null;       // 左肩/上臂根Group
     this.rightLeg = null;      // 右髋/大腿根Group
     this.leftLeg = null;       // 左髋/大腿根Group
-    // ── 13点关节控制（v3 动作矩阵系统）──
-    // 手臂：肩 → 肘 → 腕 → 手
+    // ── 15点关节控制（v3 动作矩阵系统）──
+    // 手臂：锁骨 → 肩 → 肘 → 腕 → 手
     this.rightElbow = null;    // 右肘关节Group（rightArm的子级）
     this.rightElbowTwist = null; // 右肘扭转Group（rightElbow的子级，控制ry）
     this.rightWrist = null;    // 右手腕关节Group（rightElbowTwist的子级）

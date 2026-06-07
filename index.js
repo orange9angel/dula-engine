@@ -39,5 +39,11 @@ export { TransitionBase, TransitionRegistry, registerTransition } from './transi
 // Post-processing system
 export { PostProcessBase, PostProcessRegistry, registerPostProcess } from './postprocessing/index.js';
 
+// Constraint system
+export { JointConstraintSystem } from './constraints/JointConstraintSystem.js';
+export { BodyCollisionGuard } from './constraints/BodyCollisionGuard.js';
+export { VelocitySmoother } from './constraints/VelocitySmoother.js';
+export { selectLimitPreset, clampAngle, clampJointRotation, HUMANOID_STANDARD, HUMANOID_ATHLETIC, ALIEN_FLEXIBLE } from './constraints/JointLimits.js';
+
 // Reusable light effect components
 export { GlowEffect, AuraEffect } from './effects/index.js';
