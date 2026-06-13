@@ -29,7 +29,7 @@ camera.lookAt(0, 1.5, 0);
 
 // Load Story bootstrap (registers assets + custom plugins)
 try {
-  await import('/episode/bootstrap.js');
+  await import(`/episode/bootstrap.js?cb=${Date.now()}`);
 } catch (e) {
   console.warn('No bootstrap.js found, running with empty registries:', e.message);
 }

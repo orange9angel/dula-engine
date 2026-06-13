@@ -1,20 +1,47 @@
-def schedule_dialogues(entries, min_gap=0.3):
+def extract_action_end_times(story_events):
     """
-    对话调度器：防止两个角色的台词音频重叠。
+    从 story_events 中提取动作事件的完成时间。
     
-    策略：按 startTime 排序，如果前一条的音频实际结束时间 + min_gap 
-    超过了下一条的 startTime，则将下一条的 startTime 往后推。
+    返回: {entry_index: action_end_time}
+    """
+    action_ends = {}
+    for ev in story_events:
+        if ev["type"] == "Event":
+            body = ev["body"]
+            # HurdleRun|duration=5.9|...
+            if body.startswith("HurdleRun") or body.startswith("Move"):
+                duration_match = re.search(r"duration=([\d.]+)", body)
+                if duration_match:
+                    duration = float(duration_match.group(1))
+                    end_time = ev["startTime"] + duration
+                    idx = ev["index"]
+                    # 记录该条目关联的动作完成时间
+                    action_ends[idx] = max(action_ends.get(idx, 0), end_time)
+    return action_ends
+
+
+def schedule_dialogues(entries, story_events=None, min_gap=0.3, action_buffer=0.5):
+    """
+    对话调度器：检测音频重叠问题，返回需要调整的条目。
     
-    同时更新 endTime = startTime + max(audioDuration, 2.5) 保持合理窗口。
+    策略：
+    1. 检测前一条音频是否超出其时间窗口（影响后续条目）
+    2. 检测是否有对话在动作完成前开始
     
-    返回调整后的 entries 列表和 shift 记录（用于更新 .story 文件）。
+    注意：此函数只检测问题，不自动调整时间。
+    调整应由用户在 script.story 中手动完成，或使用 smart_scheduler.py。
+    
+    返回: (entries（未修改）, issues列表)
     """
     if not entries:
         return [], []
     
+    # 提取动作完成时间
+    action_ends = extract_action_end_times(story_events or [])
+    
     # 按原始 startTime 排序
     sorted_entries = sorted(entries, key=lambda e: e["startTime"])
-    shifts = []
+    issues = []
     
     for i in range(1, len(sorted_entries)):
         prev = sorted_entries[i - 1]
@@ -22,30 +49,29 @@ def schedule_dialogues(entries, min_gap=0.3):
         
         # 前一条音频的实际结束时间
         prev_audio_end = prev["startTime"] + prev.get("audioDuration", 2.5)
-        # 下一条最早可以开始的时间
+        # 下一条最早可以开始的时间（基于音频不重叠）
         earliest_start = prev_audio_end + min_gap
         
+        # 检查当前对话条目之前是否有未完成的动作（严格在当前条目之前）
+        curr_idx = curr["index"]
+        for action_idx, action_end in action_ends.items():
+            if action_idx < curr_idx:  # 只考虑在当前条目之前开始的动作
+                if action_end > curr["startTime"]:
+                    required_start = action_end + action_buffer
+                    if required_start > earliest_start:
+                        earliest_start = required_start
+        
         if curr["startTime"] < earliest_start:
-            old_start = curr["startTime"]
-            new_start = round(earliest_start, 3)
-            shift = round(new_start - old_start, 3)
-            
-            # 更新当前条目的时间
-            curr["startTime"] = new_start
-            # endTime 也同步推移，保持原窗口长度或至少 audioDuration
-            original_window = curr.get("endTime", curr["startTime"] + 2.5) - old_start
-            curr["endTime"] = round(new_start + max(original_window, curr.get("audioDuration", 2.5)), 3)
-            
-            shifts.append({
+            shift = round(earliest_start - curr["startTime"], 3)
+            issues.append({
                 "index": curr["index"],
                 "character": curr["character"],
-                "oldStart": old_start,
-                "newStart": new_start,
                 "shift": shift,
-                "reason": f"avoid overlap with {prev['character']}'s dialogue (ends at {round(prev_audio_end, 2)}s)"
+                "reason": f"avoid overlap with {prev['character']}'s dialogue (ends at {round(prev_audio_end, 2)}s)",
+                "suggestion": f"Extend previous entry or delay this entry by {shift:.2f}s"
             })
     
-    return sorted_entries, shifts
+    return sorted_entries, issues
 
 
 def format_srt_time(seconds):
@@ -60,7 +86,7 @@ def format_srt_time(seconds):
 def update_story_timestamps(story_path, shifts):
     """
     根据 shifts 更新 .story 文件中的时间戳。
-    只调整被推移的条目及其后续条目的时间（保持相对间隔）。
+    所有在最后一个被推移条目之后的条目都会整体顺延。
     """
     if not shifts:
         return
@@ -68,17 +94,17 @@ def update_story_timestamps(story_path, shifts):
     with open(story_path, "r", encoding="utf-8") as f:
         content = f.read()
     
-    # 构建 shift 映射：index -> shift 秒数
-    shift_map = {s["index"]: s["shift"] for s in shifts}
+    # 计算最大累积偏移：找到最后一个被推移的条目，之后的所有条目都要顺延
+    max_shifted_index = max(s["index"] for s in shifts)
     
-    # 找到所有需要被推移的条目索引（包括被直接推移的条目，
-    # 以及它们之后的所有条目，因为时间轴整体后移了）
-    affected_indices = set()
-    for s in shifts:
-        affected_indices.add(s["index"])
-        # 该条目之后的所有条目也受影响
-        for idx in range(s["index"] + 1, 999):
-            affected_indices.add(idx)
+    # 计算每个索引位置应该应用的累积偏移
+    # 按索引排序 shifts，计算累积偏移
+    sorted_shifts = sorted(shifts, key=lambda s: s["index"])
+    cumulative_shift = 0
+    shift_by_index = {}
+    for s in sorted_shifts:
+        cumulative_shift = max(cumulative_shift, s["shift"])
+        shift_by_index[s["index"]] = cumulative_shift
     
     # 解析并替换时间行
     lines = content.replace("\r\n", "\n").replace("\r", "\n").split("\n")
@@ -116,12 +142,12 @@ def update_story_timestamps(story_path, shifts):
                 + int(m.group(8)) / 1000
             )
             
-            # 检查该条目是否需要推移
-            # 如果当前索引 >= 任何一个 shift 的 index，则应用对应的 shift
+            # 计算该条目应该应用的累积偏移
+            # 如果当前索引 >= 某个被推移的索引，应用该索引的累积偏移
             applicable_shift = 0
-            for s in shifts:
-                if current_index >= s["index"]:
-                    applicable_shift = max(applicable_shift, s["shift"])
+            for idx, shift in shift_by_index.items():
+                if current_index >= idx:
+                    applicable_shift = max(applicable_shift, shift)
             
             if applicable_shift > 0:
                 new_start = start + applicable_shift
@@ -1299,25 +1325,21 @@ async def generate(force_tts=False):
             }
         )
 
-    # Schedule dialogues to prevent audio overlaps
-    scheduled_entries, shifts = schedule_dialogues(manifest["entries"], min_gap=0.3)
-    manifest["entries"] = scheduled_entries
+    # Check for dialogue timing issues
+    scheduled_entries, issues = schedule_dialogues(manifest["entries"], story_events, min_gap=0.3, action_buffer=0.5)
     
-    if shifts:
-        print(f"\n[DialogueScheduler] Adjusted {len(shifts)} entry(s) to prevent overlaps:")
-        for s in shifts:
-            print(f"  Entry {s['index']} ({s['character']}): +{s['shift']:.2f}s — {s['reason']}")
+    if issues:
+        print(f"\n[DialogueScheduler] WARNING: {len(issues)} dialogue(s) have timing issues:")
+        for issue in issues:
+            print(f"  Entry {issue['index']} ({issue['character']}): {issue['reason']}")
+            print(f"    💡 {issue['suggestion']}")
+        print(f"\n  Please manually adjust script.story or use smart_scheduler.py")
     else:
-        print("\n[DialogueScheduler] No overlaps detected. Schedule is clean.")
+        print("\n[DialogueScheduler] No timing issues detected. Schedule is clean.")
 
     with open(MANIFEST_PATH, "w", encoding="utf-8") as f:
         json.dump(manifest, f, ensure_ascii=False, indent=2)
     print(f"Manifest written to: {MANIFEST_PATH}")
-
-    # Optionally update story file timestamps (disabled by default to preserve writer's intent)
-    # To enable: pass --update-story flag
-    if "--update-story" in sys.argv and shifts:
-        update_story_timestamps(STORY_PATH, shifts)
 
     # Discover manual SFX / ambient files
     manual_sfx = discover_manual_sfx()

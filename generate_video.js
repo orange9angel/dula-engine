@@ -181,6 +181,7 @@ server.listen(PORT, async () => {
       '--disable-application-cache',
       '--disable-offline-load-stale-cache',
       '--disk-cache-size=0',
+      '--incognito',
     ],
   });
   const page = await browser.newPage();
@@ -193,6 +194,16 @@ server.listen(PORT, async () => {
     origin: `http://localhost:${PORT}`,
     storageTypes: 'all',
   });
+  // Clear additional caches that might hold module imports
+  await client.send('Network.setCacheDisabled', { cacheDisabled: true });
+  try {
+    await client.send('Storage.clearDataForOrigin', {
+      origin: `http://localhost:${PORT}`,
+      storageTypes: 'cookies,local_storage,indexed_db,service_workers,cache_storage',
+    });
+  } catch (e) {
+    // Some storage types may not be supported in all Chrome versions
+  }
 
   let totalFrames = 0;
   let renderDone = false;
@@ -247,12 +258,13 @@ server.listen(PORT, async () => {
   page.on('pageerror', (err) => console.error('PAGE ERROR:', err.message));
 
   let renderUrl;
+  const cacheBuster = `&_cb=${Date.now()}`;
   if (FRAME_START >= 0 && FRAME_END >= 0) {
     const timeStart = FRAME_START / FPS;
     const timeDuration = (FRAME_END - FRAME_START + 1) / FPS;
-    renderUrl = `http://localhost:${PORT}/render.html?start=${timeStart}&duration=${timeDuration}&frameOffset=${FRAME_START}`;
+    renderUrl = `http://localhost:${PORT}/render.html?start=${timeStart}&duration=${timeDuration}&frameOffset=${FRAME_START}${cacheBuster}`;
   } else {
-    renderUrl = `http://localhost:${PORT}/render.html?start=${SEGMENT_START}&duration=${SEGMENT_DURATION}`;
+    renderUrl = `http://localhost:${PORT}/render.html?start=${SEGMENT_START}&duration=${SEGMENT_DURATION}${cacheBuster}`;
   }
   console.log(`Rendering: ${renderUrl}`);
   await page.goto(renderUrl, {
