@@ -221,6 +221,34 @@ export class Storyboard {
       }
     }
 
+    // DialogueScheduler: apply manifest-adjusted start/end times to entries
+    // This prevents audio overlaps by using the scheduled times from generate_audio.py
+    let scheduleAdjustments = 0;
+    let maxAudioEnd = 0;
+    for (const item of manifest.entries) {
+      const entry = this.entries.find(e => e.index === item.index);
+      if (entry && item.startTime !== undefined) {
+        const startDiff = Math.abs(item.startTime - entry.startTime);
+        if (startDiff > 0.01) {
+          console.log(`[DialogueScheduler] Entry ${item.index} (${entry.character}): ${entry.startTime.toFixed(2)}s -> ${item.startTime.toFixed(2)}s (+${(item.startTime - entry.startTime).toFixed(2)}s)`);
+          entry.startTime = item.startTime;
+          scheduleAdjustments++;
+        }
+        if (item.endTime !== undefined && Math.abs(item.endTime - entry.endTime) > 0.01) {
+          entry.endTime = item.endTime;
+        }
+      }
+      // Track the maximum audio end time for total duration calculation
+      if (item.audioDuration && item.startTime !== undefined) {
+        maxAudioEnd = Math.max(maxAudioEnd, item.startTime + item.audioDuration);
+      }
+    }
+    if (scheduleAdjustments > 0) {
+      console.log(`[DialogueScheduler] Applied ${scheduleAdjustments} schedule adjustment(s) to prevent audio overlaps.`);
+    }
+    // Expose total audio duration so renderer can match video length to audio
+    this.totalAudioDuration = maxAudioEnd > 0 ? maxAudioEnd : null;
+
     // Extract story-level choreography from .story DSL tags early
     // so switchScene can apply placements & props for the initial scene.
     this.storyPlacements = [];

@@ -1,3 +1,151 @@
+def schedule_dialogues(entries, min_gap=0.3):
+    """
+    对话调度器：防止两个角色的台词音频重叠。
+    
+    策略：按 startTime 排序，如果前一条的音频实际结束时间 + min_gap 
+    超过了下一条的 startTime，则将下一条的 startTime 往后推。
+    
+    同时更新 endTime = startTime + max(audioDuration, 2.5) 保持合理窗口。
+    
+    返回调整后的 entries 列表和 shift 记录（用于更新 .story 文件）。
+    """
+    if not entries:
+        return [], []
+    
+    # 按原始 startTime 排序
+    sorted_entries = sorted(entries, key=lambda e: e["startTime"])
+    shifts = []
+    
+    for i in range(1, len(sorted_entries)):
+        prev = sorted_entries[i - 1]
+        curr = sorted_entries[i]
+        
+        # 前一条音频的实际结束时间
+        prev_audio_end = prev["startTime"] + prev.get("audioDuration", 2.5)
+        # 下一条最早可以开始的时间
+        earliest_start = prev_audio_end + min_gap
+        
+        if curr["startTime"] < earliest_start:
+            old_start = curr["startTime"]
+            new_start = round(earliest_start, 3)
+            shift = round(new_start - old_start, 3)
+            
+            # 更新当前条目的时间
+            curr["startTime"] = new_start
+            # endTime 也同步推移，保持原窗口长度或至少 audioDuration
+            original_window = curr.get("endTime", curr["startTime"] + 2.5) - old_start
+            curr["endTime"] = round(new_start + max(original_window, curr.get("audioDuration", 2.5)), 3)
+            
+            shifts.append({
+                "index": curr["index"],
+                "character": curr["character"],
+                "oldStart": old_start,
+                "newStart": new_start,
+                "shift": shift,
+                "reason": f"avoid overlap with {prev['character']}'s dialogue (ends at {round(prev_audio_end, 2)}s)"
+            })
+    
+    return sorted_entries, shifts
+
+
+def format_srt_time(seconds):
+    """将秒数转换为 SRT 时间格式 HH:MM:SS,mmm"""
+    hours = int(seconds // 3600)
+    minutes = int((seconds % 3600) // 60)
+    secs = int(seconds % 60)
+    millis = int(round((seconds % 1) * 1000))
+    return f"{hours:02d}:{minutes:02d}:{secs:02d},{millis:03d}"
+
+
+def update_story_timestamps(story_path, shifts):
+    """
+    根据 shifts 更新 .story 文件中的时间戳。
+    只调整被推移的条目及其后续条目的时间（保持相对间隔）。
+    """
+    if not shifts:
+        return
+    
+    with open(story_path, "r", encoding="utf-8") as f:
+        content = f.read()
+    
+    # 构建 shift 映射：index -> shift 秒数
+    shift_map = {s["index"]: s["shift"] for s in shifts}
+    
+    # 找到所有需要被推移的条目索引（包括被直接推移的条目，
+    # 以及它们之后的所有条目，因为时间轴整体后移了）
+    affected_indices = set()
+    for s in shifts:
+        affected_indices.add(s["index"])
+        # 该条目之后的所有条目也受影响
+        for idx in range(s["index"] + 1, 999):
+            affected_indices.add(idx)
+    
+    # 解析并替换时间行
+    lines = content.replace("\r\n", "\n").replace("\r", "\n").split("\n")
+    output_lines = []
+    i = 0
+    current_index = None
+    
+    while i < len(lines):
+        line = lines[i]
+        stripped = line.strip()
+        
+        # 检测条目序号行
+        if stripped.isdigit():
+            current_index = int(stripped)
+            output_lines.append(line)
+            i += 1
+            continue
+        
+        # 检测时间行
+        m = re.match(
+            r"(\d{2}):(\d{2}):(\d{2}),(\d{3})\s+-->\s+(\d{2}):(\d{2}):(\d{2}),(\d{3})",
+            stripped,
+        )
+        if m and current_index is not None:
+            start = (
+                int(m.group(1)) * 3600
+                + int(m.group(2)) * 60
+                + int(m.group(3))
+                + int(m.group(4)) / 1000
+            )
+            end = (
+                int(m.group(5)) * 3600
+                + int(m.group(6)) * 60
+                + int(m.group(7))
+                + int(m.group(8)) / 1000
+            )
+            
+            # 检查该条目是否需要推移
+            # 如果当前索引 >= 任何一个 shift 的 index，则应用对应的 shift
+            applicable_shift = 0
+            for s in shifts:
+                if current_index >= s["index"]:
+                    applicable_shift = max(applicable_shift, s["shift"])
+            
+            if applicable_shift > 0:
+                new_start = start + applicable_shift
+                new_end = end + applicable_shift
+                new_time_line = f"{format_srt_time(new_start)} --> {format_srt_time(new_end)}"
+                output_lines.append(new_time_line)
+                print(f"  [Story] Entry {current_index}: {stripped} -> {new_time_line}")
+            else:
+                output_lines.append(line)
+            
+            i += 1
+            continue
+        
+        output_lines.append(line)
+        i += 1
+    
+    # 写回文件
+    new_content = "\n".join(output_lines)
+    with open(story_path, "w", encoding="utf-8") as f:
+        f.write(new_content)
+    
+    print(f"Updated story timestamps in: {story_path}")
+
+
 #!/usr/bin/env python3
 """
 Generate audio files from SRT using edge-tts.
@@ -1151,9 +1299,25 @@ async def generate(force_tts=False):
             }
         )
 
+    # Schedule dialogues to prevent audio overlaps
+    scheduled_entries, shifts = schedule_dialogues(manifest["entries"], min_gap=0.3)
+    manifest["entries"] = scheduled_entries
+    
+    if shifts:
+        print(f"\n[DialogueScheduler] Adjusted {len(shifts)} entry(s) to prevent overlaps:")
+        for s in shifts:
+            print(f"  Entry {s['index']} ({s['character']}): +{s['shift']:.2f}s — {s['reason']}")
+    else:
+        print("\n[DialogueScheduler] No overlaps detected. Schedule is clean.")
+
     with open(MANIFEST_PATH, "w", encoding="utf-8") as f:
         json.dump(manifest, f, ensure_ascii=False, indent=2)
     print(f"Manifest written to: {MANIFEST_PATH}")
+
+    # Optionally update story file timestamps (disabled by default to preserve writer's intent)
+    # To enable: pass --update-story flag
+    if "--update-story" in sys.argv and shifts:
+        update_story_timestamps(STORY_PATH, shifts)
 
     # Discover manual SFX / ambient files
     manual_sfx = discover_manual_sfx()

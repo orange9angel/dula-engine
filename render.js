@@ -52,7 +52,10 @@ const fadeDiv = document.getElementById('fade');
 async function renderFrames() {
   await storyboard.load('/episode/script.story', '/episode/assets/audio/manifest.json');
 
-  const totalDuration = Math.max(...storyboard.entries.map((e) => e.endTime)) + 1.5;
+  const totalDuration = Math.max(
+    Math.max(...storyboard.entries.map((e) => e.endTime)) + 1.5,
+    storyboard.totalAudioDuration || 0
+  );
 
   // Determine render range
   const startTime = SEGMENT_START;
