@@ -18,6 +18,14 @@ const DEFAULT_TRANSITIONS = {
   entrances: {},
 };
 
+const HURDLE_START_Z = -50;
+const HURDLE_START_TO_FIRST = 13.72;
+const HURDLE_SPACING = 9.14;
+const HURDLE_ZS = Array.from(
+  { length: 10 },
+  (_, i) => HURDLE_START_Z + HURDLE_START_TO_FIRST + i * HURDLE_SPACING
+);
+
 export class Storyboard {
   constructor(renderer, camera, audioDestination = null, outlineEffect = null) {
     this.renderer = renderer;
@@ -53,6 +61,108 @@ export class Storyboard {
     this.cinematicAdapter = null;
     this.sceneDirector = null;
     this.timeScaleEvents = []; // { startTime, endTime, scale }
+  }
+
+  _queueHurdleRun(char, ev) {
+    const options = ev.options || {};
+    const numberOption = (key, fallback) => {
+      const n = Number(options[key]);
+      return Number.isFinite(n) ? n : fallback;
+    };
+    const numberValue = (value, fallback) => {
+      const n = Number(value);
+      return Number.isFinite(n) ? n : fallback;
+    };
+
+    const startTime = ev.startTime;
+    const duration = Math.max(0.1, numberValue(options.duration ?? ev.duration, 1.0));
+    const x = numberOption('x', char.mesh.position.x);
+    const fromZ = numberOption('fromZ', char.mesh.position.z);
+    const toZ = numberValue(options.z ?? options.toZ, char.mesh.position.z);
+    const groundY = numberValue(options.groundY ?? options.y, 0);
+    const finalY = numberOption('landY', groundY);
+    const jumpHeight = numberOption('jumpHeight', 1.35);
+    // 跨栏专用：更大的起跳/落地区间，让抛物线更明显
+    const takeoffDistance = Math.max(0.3, numberOption('takeoffDistance', 1.45));
+    const landingDistance = Math.max(0.3, numberOption('landingDistance', 1.55));
+    const jumpDuration = Math.max(0.55, numberOption('jumpDuration', 0.95));
+    const direction = toZ >= fromZ ? 1 : -1;
+    const totalDistance = Math.max(0.001, Math.abs(toZ - fromZ));
+    const lowZ = Math.min(fromZ, toZ);
+    const highZ = Math.max(fromZ, toZ);
+
+    const isInsideSegment = (z, margin = 0.05) => z > lowZ + margin && z < highZ - margin;
+    const addWaypoint = (points, z, y) => {
+      if (!isInsideSegment(z, -0.001)) return;
+      const previous = points[points.length - 1];
+      if (previous && Math.abs(previous.z - z) < 0.001 && Math.abs(previous.y - y) < 0.001) return;
+      points.push({ x, y, z });
+    };
+
+    const hurdleZs = HURDLE_ZS
+      .filter((z) => isInsideSegment(z))
+      .sort((a, b) => direction * (a - b));
+
+    // 构建路径点：起跳点(y=0) → 栏架前上升点 → 栏架顶点(y=jumpHeight) → 栏架后下降点 → 落地点(y=0)
+    const waypoints = [];
+    for (const hurdleZ of hurdleZs) {
+      // 起跳点：提前开始上升
+      addWaypoint(waypoints, hurdleZ - direction * takeoffDistance, groundY);
+      // 上升中点：已经离地
+      addWaypoint(waypoints, hurdleZ - direction * takeoffDistance * 0.45, groundY + jumpHeight * 0.55);
+      // 栏架顶点：最高处
+      addWaypoint(waypoints, hurdleZ, groundY + jumpHeight);
+      // 下降中点：开始下落
+      addWaypoint(waypoints, hurdleZ + direction * landingDistance * 0.45, groundY + jumpHeight * 0.55);
+      // 落地点：回到地面
+      addWaypoint(waypoints, hurdleZ + direction * landingDistance, groundY);
+    }
+    waypoints.push({ x, y: finalY, z: toZ });
+
+    let cursor = startTime;
+    for (let i = 0; i < waypoints.length; i++) {
+      const point = waypoints[i];
+      const progress = Math.min(1, Math.max(0, Math.abs(point.z - fromZ) / totalDistance));
+      const pointTime = i === waypoints.length - 1
+        ? startTime + duration
+        : startTime + duration * progress;
+      if (pointTime <= cursor + 0.03) continue;
+      char.moveTo(point, cursor, pointTime - cursor);
+      cursor = pointTime;
+    }
+
+    // 播放跑步动画（全程）
+    const MoveAnimClass = AnimationRegistry[options.action || 'Run'];
+    if (MoveAnimClass) {
+      char.playAnimation(MoveAnimClass, startTime, duration, options);
+    }
+
+    // 为每个栏架播放跳跃动画，与路径同步
+    const JumpAnimClass = AnimationRegistry['CrouchJump'];
+    const DustAnimClass = AnimationRegistry['FXDustKick'];
+    for (const hurdleZ of hurdleZs) {
+      const progress = Math.min(1, Math.max(0, Math.abs(hurdleZ - fromZ) / totalDistance));
+      const peakTime = startTime + duration * progress;
+      // 跳跃动画提前开始（包含起跳蓄力），与路径同步
+      const jumpStart = Math.max(startTime, peakTime - jumpDuration * 0.6);
+      if (JumpAnimClass) {
+        char.playAnimation(JumpAnimClass, jumpStart, jumpDuration, {
+          ...options,
+          height: jumpHeight,
+          duration: jumpDuration,
+          arms: options.arms || 'balance',
+        });
+      }
+      // 落地尘土效果
+      if (DustAnimClass && options.dust !== false && options.dust !== 'false') {
+        char.playAnimation(
+          DustAnimClass,
+          Math.min(startTime + duration - 0.1, peakTime + jumpDuration * 0.35),
+          undefined,
+          options
+        );
+      }
+    }
   }
 
   async load(storyPath, manifestPath) {
@@ -217,8 +327,17 @@ export class Storyboard {
       }
     }
 
-    // Spawn characters mentioned in SRT
+    // Spawn characters mentioned in SRT (speaking or in story events)
     const mentionedChars = new Set(this.entries.map((e) => e.character).filter(Boolean));
+    for (const entry of this.entries) {
+      if (entry.storyEvents) {
+        for (const ev of entry.storyEvents) {
+          if (ev.options && ev.options.character) {
+            mentionedChars.add(ev.options.character);
+          }
+        }
+      }
+    }
     for (const name of mentionedChars) {
       const CharClass = CharacterRegistry[name];
       if (CharClass) {
@@ -359,7 +478,11 @@ export class Storyboard {
         const { name, options } = entry.cameraMove;
         const MoveClass = CameraMoveRegistry[name];
         if (MoveClass) {
-          this.playCameraMove(MoveClass, entry.startTime, entry.endTime - entry.startTime, options);
+          const optionDuration = Number(options?.duration);
+          const duration = Number.isFinite(optionDuration) && optionDuration > 0
+            ? optionDuration
+            : entry.endTime - entry.startTime;
+          this.playCameraMove(MoveClass, entry.startTime, duration, options);
         } else {
           console.warn(`Camera move "${name}" not found in registry.`);
         }
@@ -473,11 +596,13 @@ export class Storyboard {
       activeScene = nextScene;
     }
 
-    // Queue generic story events (Event:Move, Event:Animate) for all scenes
+    // Queue generic story events (Event:Move, Event:HurdleRun, Event:Animate) for all scenes
     for (const ev of this.storyEvents) {
       const char = this.characters.get(ev.character);
       if (!char) continue;
-      if (ev.type === 'move') {
+      if (ev.type === 'hurdlerun') {
+        this._queueHurdleRun(char, ev);
+      } else if (ev.type === 'move') {
         let targetPos;
         if (ev.relative) {
           const current = { x: char.mesh.position.x, y: char.mesh.position.y, z: char.mesh.position.z };
@@ -487,7 +612,10 @@ export class Storyboard {
             z: current.z + (ev.z || 0),
           };
         } else {
-          targetPos = { x: ev.x || 0, z: ev.z || 0 };
+          targetPos = {
+            x: ev.x !== undefined ? ev.x : char.mesh.position.x,
+            z: ev.z !== undefined ? ev.z : char.mesh.position.z,
+          };
           // Only set y if explicitly provided; otherwise keep current height
           if (ev.y !== undefined) targetPos.y = ev.y;
         }
@@ -620,6 +748,9 @@ export class Storyboard {
         const dz = 0 - char.mesh.position.z;
         char.mesh.rotation.y = Math.atan2(dx, dz);
       } else if (p.face === 'forward') {
+        char.mesh.lookAt(char.mesh.position.x, char.mesh.position.y, char.mesh.position.z + 5);
+      } else if (p.face === 'camera') {
+        // Face toward the camera (positive Z direction)
         char.mesh.lookAt(char.mesh.position.x, char.mesh.position.y, char.mesh.position.z + 5);
       } else {
         const targetChar = this.characters.get(p.face);
@@ -770,7 +901,10 @@ export class Storyboard {
             z: current.z + (ev.z || 0),
           };
         } else {
-          targetPos = { x: ev.x || 0, z: ev.z || 0 };
+          targetPos = {
+            x: ev.x !== undefined ? ev.x : char.mesh.position.x,
+            z: ev.z !== undefined ? ev.z : char.mesh.position.z,
+          };
           // Only set y if explicitly provided; otherwise keep current height
           if (ev.y !== undefined) targetPos.y = ev.y;
         }
@@ -1219,6 +1353,7 @@ export class Storyboard {
               const evKey = ev.options.action ? ev.name + ':' + ev.options.action : ev.name;
               if (entry._sceneEventsTriggered[evKey]) continue; // already triggered
               entry._sceneEventsTriggered[evKey] = true;
+              let handledSceneEvent = false;
 
               if (ev.name === 'SharkAppear' && this.currentScene.showShark) {
                 this.currentScene.showShark();
@@ -1250,6 +1385,24 @@ export class Storyboard {
               if (ev.name === 'SplashStop' && this.currentScene.stopSplash) {
                 this.currentScene.stopSplash();
               }
+              // KnockHurdle: explicit hurdle collision/fall cue
+              if (ev.name === 'KnockHurdle' && this.currentScene.knockHurdle) {
+                const offset = Number(ev.options.offset);
+                this.currentScene.knockHurdle(
+                  ev.options,
+                  entry.startTime + (Number.isFinite(offset) ? offset : 0)
+                );
+                handledSceneEvent = true;
+              }
+              // Hurdle coordinate markers for debugging shot alignment
+              if (ev.name === 'ShowHurdleMarkers' && this.currentScene.showHurdleMarkers) {
+                this.currentScene.showHurdleMarkers(ev.options);
+                handledSceneEvent = true;
+              }
+              if (ev.name === 'HideHurdleMarkers' && this.currentScene.hideHurdleMarkers) {
+                this.currentScene.hideHurdleMarkers(ev.options);
+                handledSceneEvent = true;
+              }
               // RescueTakecopter: rescue character with takecopter
               if (ev.name === 'RescueTakecopter' && this.currentScene.rescueWithTakecopter) {
                 this.currentScene.rescueWithTakecopter(ev.options.character || 'Nobita');
@@ -1265,11 +1418,11 @@ export class Storyboard {
               }
               // Generic scene event: if the scene has a method matching the event name, call it
               const sceneMethod = ev.name.charAt(0).toLowerCase() + ev.name.slice(1);
-              if (typeof this.currentScene[sceneMethod] === 'function') {
+              if (!handledSceneEvent && typeof this.currentScene[sceneMethod] === 'function') {
                 this.currentScene[sceneMethod]();
               }
               // Also try exact match (for methods like summonCourierShip)
-              if (typeof this.currentScene[ev.name] === 'function') {
+              if (!handledSceneEvent && typeof this.currentScene[ev.name] === 'function') {
                 this.currentScene[ev.name]();
               }
               // Hide character

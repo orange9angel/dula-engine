@@ -233,7 +233,8 @@ def parse_story(text):
         dialogue = re.sub(r"\{Voice:[^}]+\}\s*", "", dialogue)
         dialogue = re.sub(r"\{[A-Za-z]\w*:[^}]+\}\s*", "", dialogue)
         dialogue = re.sub(r"\{Hitstop\|[^}]+\}\s*", "", dialogue)
-        dialogue = re.sub(r"\{(?!Camera:)\w+\}\s*", "", dialogue).strip()
+        dialogue = re.sub(r"\{FX[^}]+\}\s*", "", dialogue)
+        dialogue = re.sub(r"\{(?!Camera:)\w+(?:\|[^}]*)?\}\s*", "", dialogue).strip()
 
         # Parse all event tags from content
         event_tags = re.findall(r"\{(\w+):([^}]+)\}", content)
@@ -888,7 +889,7 @@ def mix_audio(manifest, bgm_path=None, sfx_events=None):
         filters = []
         for i, entry in enumerate(entries):
             file_path = os.path.join(OUTPUT_DIR, entry["file"])
-            inputs.append(f'-i "{file_path}"')
+            inputs.append(file_path)
             delay_ms = int(round(entry["startTime"] * 1000))
             filters.append(f"[{i}:a]atrim=start=0.2,adelay={delay_ms}|{delay_ms}[d{i}]")
 
@@ -897,9 +898,21 @@ def mix_audio(manifest, bgm_path=None, sfx_events=None):
         amix = f"{amix_inputs}amix=inputs={n_entries}:duration=longest:normalize=0[dialogue]"
         filter_complex = ";".join(filters + [amix])
 
-        cmd = f'ffmpeg -y {" ".join(inputs)} -filter_complex "{filter_complex}" -map "[dialogue]" -acodec pcm_s16le -ar 48000 "{dialogue_path}"'
+        filter_script = os.path.join(OUTPUT_DIR, "_dialogue_filter_complex.txt")
+        with open(filter_script, "w", encoding="utf-8") as f:
+            f.write(filter_complex)
+        cmd = ["ffmpeg", "-y"]
+        for input_path in inputs:
+            cmd.extend(["-i", input_path])
+        cmd.extend([
+            "-filter_complex_script", filter_script,
+            "-map", "[dialogue]",
+            "-acodec", "pcm_s16le",
+            "-ar", "48000",
+            dialogue_path,
+        ])
         print("Mixing dialogue track...")
-        subprocess.run(cmd, shell=True, check=True)
+        subprocess.run(cmd, check=True)
     else:
         dialogue_path = None
 
@@ -910,7 +923,7 @@ def mix_audio(manifest, bgm_path=None, sfx_events=None):
         filters = []
         n_sfx = len(sfx_events)
         for i, sfx in enumerate(sfx_events):
-            inputs.append(f'-i "{sfx["file"]}"')
+            inputs.append(sfx["file"])
             delay_ms = int(round(sfx["startTime"] * 1000))
             # Pre-scale each SFX to compensate for amix normalize
             vol = sfx.get("volume", 1.0)
@@ -920,9 +933,21 @@ def mix_audio(manifest, bgm_path=None, sfx_events=None):
         amix = f"{amix_inputs}amix=inputs={n_sfx}:duration=longest:normalize=0[sfxout]"
         filter_complex = ";".join(filters + [amix])
 
-        cmd = f'ffmpeg -y {" ".join(inputs)} -filter_complex "{filter_complex}" -map "[sfxout]" -acodec pcm_s16le -ar 48000 "{sfx_path}"'
+        filter_script = os.path.join(OUTPUT_DIR, "_sfx_filter_complex.txt")
+        with open(filter_script, "w", encoding="utf-8") as f:
+            f.write(filter_complex)
+        cmd = ["ffmpeg", "-y"]
+        for input_path in inputs:
+            cmd.extend(["-i", input_path])
+        cmd.extend([
+            "-filter_complex_script", filter_script,
+            "-map", "[sfxout]",
+            "-acodec", "pcm_s16le",
+            "-ar", "48000",
+            sfx_path,
+        ])
         print("Mixing SFX track...")
-        subprocess.run(cmd, shell=True, check=True)
+        subprocess.run(cmd, check=True)
     else:
         sfx_path = None
 
@@ -945,12 +970,12 @@ def mix_audio(manifest, bgm_path=None, sfx_events=None):
     duck_depth = mix_cfg.get("duckDepth", 0.3)
 
     if dialogue_path:
-        final_inputs.append(f'-i "{dialogue_path}"')
+        final_inputs.append(dialogue_path)
         final_filters.append(f"[{stream_idx}:a]volume={dialogue_vol}[dialogue{stream_idx}]")
         stream_idx += 1
 
     if bgm_path:
-        final_inputs.append(f'-i "{bgm_path}"')
+        final_inputs.append(bgm_path)
         if use_ducking and dialogue_path:
             # Sidechain ducking: BGM is reduced when dialogue is present
             # sidechaincompress needs 2 inputs: [main][sidechain]
@@ -960,7 +985,7 @@ def mix_audio(manifest, bgm_path=None, sfx_events=None):
         stream_idx += 1
 
     if sfx_path:
-        final_inputs.append(f'-i "{sfx_path}"')
+        final_inputs.append(sfx_path)
         final_filters.append(f"[{stream_idx}:a]volume={sfx_vol}[sfx{stream_idx}]")
         stream_idx += 1
 
@@ -975,9 +1000,18 @@ def mix_audio(manifest, bgm_path=None, sfx_events=None):
     amix = f"{amix_inputs}amix=inputs={stream_idx}:duration=longest:normalize=0[outa];[outa]alimiter=level_in=1.0:level_out=1.0:limit=0.95,volume=0.89[limited]"
     filter_complex = ";".join(final_filters + [amix])
 
-    cmd = f'ffmpeg -y {" ".join(final_inputs)} -filter_complex "{filter_complex}" -map "[limited]" -acodec pcm_s16le -ar 48000 "{mixed_path}"'
+    cmd = ["ffmpeg", "-y"]
+    for input_path in final_inputs:
+        cmd.extend(["-i", input_path])
+    cmd.extend([
+        "-filter_complex", filter_complex,
+        "-map", "[limited]",
+        "-acodec", "pcm_s16le",
+        "-ar", "48000",
+        mixed_path,
+    ])
     print("Mixing final audio into mixed.wav...")
-    subprocess.run(cmd, shell=True, check=True)
+    subprocess.run(cmd, check=True)
     print(f"Mixed audio written to: {mixed_path}")
 
 

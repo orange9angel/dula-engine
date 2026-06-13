@@ -155,7 +155,7 @@ export class ActionMatrixController {
         secondary.endTime - secondary.startTime,
         time
       );
-      targetPose = this._mergePoses(targetPose, secondaryPose);
+      targetPose = this._mergePoses(targetPose, secondaryPose, primary.name, secondary.name);
     }
 
     let finalPose = targetPose;
@@ -185,17 +185,89 @@ export class ActionMatrixController {
     this._inTransition = true;
   }
 
-  _mergePoses(primary, secondary) {
+  _mergePoses(primary, secondary, primaryName = '', secondaryName = '') {
     const result = primary.clone();
-    const joints = ['mouth', 'eyebrows', 'eyelids', 'pupils'];
-    for (const joint of joints) {
+
+    // ── 面部表情：始终合并（secondary 作为叠加层） ──
+    const faceJoints = ['mouth', 'eyebrows', 'eyelids', 'pupils'];
+    for (const joint of faceJoints) {
       if (secondary[joint] && primary[joint]) {
-        // Both exist — blend with expression priority (0.7)
         result[joint] = this._blendFaceFeatures(primary[joint], secondary[joint], 0.7);
       } else if (secondary[joint]) {
         result[joint] = { ...secondary[joint] };
       }
     }
+
+    // ── 身体关节：智能层级合并 ──
+    // 策略：根据动画类型决定哪些关节由哪个动画主导
+    const isPrimaryRun = primaryName === 'Run';
+    const isSecondaryRun = secondaryName === 'Run';
+    const isPrimaryJump = primaryName === 'CrouchJump';
+    const isSecondaryJump = secondaryName === 'CrouchJump';
+
+    // 当 Run + CrouchJump 组合时：
+    // - Run 主导四肢（shoulder, elbow, wrist, hip, knee, ankle）
+    // - CrouchJump 主导 mesh.y（整体高度）和 mesh.rx（前倾）
+    if ((isPrimaryRun && isSecondaryJump) || (isPrimaryJump && isSecondaryRun)) {
+      const runPose = isPrimaryRun ? primary : secondary;
+      const jumpPose = isPrimaryJump ? primary : secondary;
+
+      // 四肢：Run 主导
+      const limbJoints = [
+        'rightShoulder', 'rightElbow', 'rightElbowTwist', 'rightWrist',
+        'leftShoulder', 'leftElbow', 'leftElbowTwist', 'leftWrist',
+        'rightHip', 'rightKnee', 'rightAnkle',
+        'leftHip', 'leftKnee', 'leftAnkle',
+      ];
+      for (const joint of limbJoints) {
+        if (runPose[joint]) {
+          result[joint] = { ...runPose[joint] };
+        }
+      }
+
+      // mesh：合并 — Run 的 rx/rz/ry，Jump 的 y（优先）
+      if (!result.mesh) result.mesh = {};
+      const runMesh = runPose.mesh || {};
+      const jumpMesh = jumpPose.mesh || {};
+      // Jump 的 y 优先（起跳高度）
+      if (jumpMesh.y !== undefined) result.mesh.y = jumpMesh.y;
+      // Run 的 rx（前倾）和 rz（侧倾）作为基础，Jump 的叠加
+      if (runMesh.rx !== undefined && jumpMesh.rx !== undefined) {
+        result.mesh.rx = runMesh.rx + jumpMesh.rx;
+      } else if (jumpMesh.rx !== undefined) {
+        result.mesh.rx = jumpMesh.rx;
+      } else if (runMesh.rx !== undefined) {
+        result.mesh.rx = runMesh.rx;
+      }
+      if (runMesh.rz !== undefined) result.mesh.rz = runMesh.rz;
+      if (runMesh.ry !== undefined) result.mesh.ry = runMesh.ry;
+      // x/z 位移：Run 优先（但通常 Run 动画不设 x/z）
+      if (runMesh.x !== undefined) result.mesh.x = runMesh.x;
+      if (runMesh.z !== undefined) result.mesh.z = runMesh.z;
+
+      // 头部：Jump 主导（起跳时头部稳定）
+      if (jumpPose.headGroup) {
+        result.headGroup = { ...jumpPose.headGroup };
+      }
+
+      return result;
+    }
+
+    // 默认：primary 主导，secondary 只补充缺失的关节
+    const bodyJoints = [
+      'headGroup', 'rightClavicle', 'leftClavicle',
+      'rightShoulder', 'rightElbow', 'rightElbowTwist', 'rightWrist',
+      'leftShoulder', 'leftElbow', 'leftElbowTwist', 'leftWrist',
+      'rightHip', 'rightKnee', 'rightAnkle',
+      'leftHip', 'leftKnee', 'leftAnkle',
+      'mesh',
+    ];
+    for (const joint of bodyJoints) {
+      if (!result[joint] && secondary[joint]) {
+        result[joint] = { ...secondary[joint] };
+      }
+    }
+
     return result;
   }
 
