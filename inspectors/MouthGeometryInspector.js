@@ -23,7 +23,17 @@ export class MouthGeometryInspector extends InspectorBase {
 
   inspect(context) {
     this.reset();
-    const { episodeDir } = context;
+    const { episodeDir, entries } = context;
+
+    // 只检查当前剧集中实际出现的角色，避免扫描整个 dula-assets 产生无关警告
+    const usedChars = new Set();
+    const narrationOnlyChars = new Set(['Narrator']);
+    for (const entry of entries || []) {
+      if (entry.character && !narrationOnlyChars.has(entry.character)) {
+        usedChars.add(entry.character);
+      }
+    }
+    if (usedChars.size === 0) return;
 
     // 扫描角色文件，分析 mouth 几何体类型
     // 优先搜索源码目录（最新），再搜索 node_modules（可能过时）
@@ -42,16 +52,13 @@ export class MouthGeometryInspector extends InspectorBase {
       }
     }
 
-    const charFiles = [];
     if (charsDir) {
-      const files = fs.readdirSync(charsDir).filter((f) => f.endsWith('.js'));
-      for (const f of files) {
-        charFiles.push(path.join(charsDir, f));
+      for (const charName of usedChars) {
+        const charFile = path.join(charsDir, `${charName}.js`);
+        if (fs.existsSync(charFile)) {
+          this._analyzeCharacterFile(charFile);
+        }
       }
-    }
-
-    for (const charFile of charFiles) {
-      this._analyzeCharacterFile(charFile);
     }
 
     // 也检查 CharacterBase.js 中的 animateMouth 实现

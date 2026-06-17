@@ -142,12 +142,12 @@ export class NarrativeLogicInspector extends InspectorBase {
 
       // 检查新场景第一条目是否有 Position 标签（角色定位）
       const currEntry = curr.entry;
-      const hasPositionInCurr = currEntry.positions && currEntry.positions.length > 0;
-      const hasPositionInRaw = currEntry.content && /\{Position:\w+/.test(currEntry.content);
+      const hasPositionInCurr = currEntry.positionOps && currEntry.positionOps.length > 0;
+      const hasPositionInRaw = currEntry.rawText && /\{Position:\w+/.test(currEntry.rawText);
 
       if (!hasPositionInCurr && !hasPositionInRaw) {
         // 检查下几条目是否有 Position
-        const nextFewEntries = entries.slice(curr.entryIndex, curr.entryIndex + 3);
+        const nextFewEntries = entries.slice(curr.entryIndex, curr.entryIndex + 5);
         const hasPositionSoon = nextFewEntries.some((e) =>
           (e.positionOps && e.positionOps.length > 0) ||
           (e.rawText && /\{Position:\w+/.test(e.rawText))
@@ -188,8 +188,8 @@ export class NarrativeLogicInspector extends InspectorBase {
           );
 
           const hasReentry = entries.slice(curr.entryIndex, curr.entryIndex + 5).some((e) =>
-            e.positions?.some((po) => po.name === char) ||
-            (e.content && new RegExp(`Position:${char}`, 'i').test(e.content))
+            e.positionOps?.some((po) => po.character === char) ||
+            (e.rawText && new RegExp(`Position:${char}`, 'i').test(e.rawText))
           );
 
           if (!hasExit && !hasReentry) {
@@ -290,22 +290,26 @@ export class NarrativeLogicInspector extends InspectorBase {
   _checkCharacterEntrance(entries, storyText) {
     const charFirstAppearance = new Map(); // char -> { entry, entryIndex, hasPosition }
     const charPositionHistory = new Map(); // char -> last known scene
+    const narrationOnlyChars = new Set(['Narrator']);
 
     for (let i = 0; i < entries.length; i++) {
       const entry = entries[i];
       if (!entry.character) continue;
 
       const char = entry.character;
+      if (narrationOnlyChars.has(char)) continue;
 
       if (!charFirstAppearance.has(char)) {
         // 首次出场
-        const hasPosition = entry.positions?.some((po) => po.name === char) ||
-          (entry.content && new RegExp(`Position:${char}`, 'i').test(entry.content));
+        const hasPosition = entry.positionOps?.some((po) => po.character === char) ||
+          entry.storyEvents?.some((ev) => ev.name === 'Move' && ev.options?.character === char) ||
+          (entry.rawText && (new RegExp(`Position:${char}`, 'i').test(entry.rawText) || new RegExp(`Event:Move\\|character=${char}`, 'i').test(entry.rawText)));
 
-        // 检查前面几条目是否有该角色的 Position
+        // 检查前面几条目是否有该角色的 Position 或 Move
         const hasPositionBefore = entries.slice(0, i).some((e) =>
-          e.positions?.some((po) => po.name === char) ||
-          (e.content && new RegExp(`Position:${char}`, 'i').test(e.content))
+          e.positionOps?.some((po) => po.character === char) ||
+          e.storyEvents?.some((ev) => ev.name === 'Move' && ev.options?.character === char) ||
+          (e.rawText && (new RegExp(`Position:${char}`, 'i').test(e.rawText) || new RegExp(`Event:Move\\|character=${char}`, 'i').test(e.rawText)))
         );
 
         if (!hasPosition && !hasPositionBefore) {

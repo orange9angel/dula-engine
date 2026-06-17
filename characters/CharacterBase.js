@@ -518,7 +518,8 @@ export class CharacterBase {
     if (geoType === 'ConeGeometry') {
       const baseRot = this.mouthBaseRotationX !== undefined ? this.mouthBaseRotationX : Math.PI;
       const jawOpen = shape.jawOpen * tensionScale;
-      this.mouth.rotation.x = baseRot - jawOpen;
+      // Cone mouths (Doraemon) point down when closed; opening swings the tip further down.
+      this.mouth.rotation.x = baseRot + jawOpen;
     } else if (geoType === 'SphereGeometry') {
       // Legacy sphere mouth: map new lip params to old scale params
       const scaleY = 1.0 + shape.lipHeight * 0.8;

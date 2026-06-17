@@ -186,26 +186,34 @@ export class VisualInspector extends InspectorBase {
    * 检查同一场景中角色位置是否重叠（距离过近）
    */
   _checkCharacterOverlap(entries) {
-    // 收集每个场景的角色位置
-    const scenePositions = new Map(); // scene -> [{ character, x, z, entry }]
+    // 按场景+时间点分组收集角色位置，只检查同一时刻的位置是否重叠
+    // 避免把不同 SRT 条目中的移动过程位置混在一起比较
+    const sceneTimePositions = new Map(); // scene -> Map(timeKey -> [{ character, x, z, entry }])
+    const narrationOnlyChars = new Set(['Narrator']);
 
     for (const entry of entries) {
       if (!entry.scene) continue;
-      if (!scenePositions.has(entry.scene)) {
-        scenePositions.set(entry.scene, []);
+      if (!sceneTimePositions.has(entry.scene)) {
+        sceneTimePositions.set(entry.scene, new Map());
       }
+      const timeMap = sceneTimePositions.get(entry.scene);
+      const timeKey = entry.startTime.toFixed(2);
+      if (!timeMap.has(timeKey)) {
+        timeMap.set(timeKey, []);
+      }
+      const bucket = timeMap.get(timeKey);
 
       // 从 positionOps 提取位置
       if (entry.positionOps && entry.positionOps.length > 0) {
         for (const po of entry.positionOps) {
+          if (narrationOnlyChars.has(po.character)) continue;
           const x = po.options?.x ?? 0;
           const z = po.options?.z ?? 0;
-          scenePositions.get(entry.scene).push({
-            character: po.character,
-            x,
-            z,
-            entry,
-          });
+          // 同一角色在同一时刻去重
+          const existing = bucket.find((p) => p.character === po.character && Math.abs(p.x - x) < 0.1 && Math.abs(p.z - z) < 0.1);
+          if (!existing) {
+            bucket.push({ character: po.character, x, z, entry });
+          }
         }
       }
 
@@ -215,53 +223,49 @@ export class VisualInspector extends InspectorBase {
         let match;
         while ((match = posRegex.exec(entry.rawText)) !== null) {
           const char = match[1];
+          if (narrationOnlyChars.has(char)) continue;
           const opts = match[2];
           const xMatch = opts.match(/x=([-\d.]+)/);
           const zMatch = opts.match(/z=([-\d.]+)/);
           const x = xMatch ? parseFloat(xMatch[1]) : 0;
           const z = zMatch ? parseFloat(zMatch[1]) : 0;
-          // 避免重复（如果 positionOps 已处理）
-          const existing = scenePositions.get(entry.scene).find((p) => p.character === char && Math.abs(p.x - x) < 0.1 && Math.abs(p.z - z) < 0.1);
+          const existing = bucket.find((p) => p.character === char && Math.abs(p.x - x) < 0.1 && Math.abs(p.z - z) < 0.1);
           if (!existing) {
-            scenePositions.get(entry.scene).push({
-              character: char,
-              x,
-              z,
-              entry,
-            });
+            bucket.push({ character: char, x, z, entry });
           }
         }
       }
     }
 
-    // 检查每个场景内的角色距离
-    for (const [scene, positions] of scenePositions) {
-      for (let i = 0; i < positions.length; i++) {
-        for (let j = i + 1; j < positions.length; j++) {
-          const a = positions[i];
-          const b = positions[j];
-          // 跳过同一角色的多个位置声明
-          if (a.character === b.character) continue;
+    // 检查每个场景、每个时间点内的角色距离
+    for (const [scene, timeMap] of sceneTimePositions) {
+      for (const [timeKey, positions] of timeMap) {
+        for (let i = 0; i < positions.length; i++) {
+          for (let j = i + 1; j < positions.length; j++) {
+            const a = positions[i];
+            const b = positions[j];
+            if (a.character === b.character) continue;
 
-          const dx = a.x - b.x;
-          const dz = a.z - b.z;
-          const distance = Math.sqrt(dx * dx + dz * dz);
+            const dx = a.x - b.x;
+            const dz = a.z - b.z;
+            const distance = Math.sqrt(dx * dx + dz * dz);
 
-          // 距离小于 1.5 视为重叠（角色模型半径约 0.5-0.8）
-          if (distance < 1.5) {
-            this.addIssue('error',
-              `场景 ${scene} 中角色 ${a.character} 和 ${b.character} 位置重叠（距离 ${distance.toFixed(2)}），会穿模或挤在一起`,
-              a.entry?.startTime ?? b.entry?.startTime,
-              `调整 {Position:${a.character}|x=...|z=...} 和 {Position:${b.character}|x=...|z=...}，保持间距 ≥ 1.5`,
-              'BUG-VIS-CHAR-OVERLAP'
-            );
-          } else if (distance < 2.5) {
-            this.addIssue('warning',
-              `场景 ${scene} 中角色 ${a.character} 和 ${b.character} 间距过近（距离 ${distance.toFixed(2)}），可能画面拥挤`,
-              a.entry?.startTime ?? b.entry?.startTime,
-              `适当拉开 {Position:${a.character}} 和 {Position:${b.character}} 的距离`,
-              'BUG-VIS-CHAR-CLOSE'
-            );
+            // 距离小于 1.5 视为重叠（角色模型半径约 0.5-0.8）
+            if (distance < 1.5) {
+              this.addIssue('error',
+                `场景 ${scene} 中角色 ${a.character} 和 ${b.character} 位置重叠（距离 ${distance.toFixed(2)}），会穿模或挤在一起`,
+                a.entry?.startTime ?? b.entry?.startTime,
+                `调整 {Position:${a.character}|x=...|z=...} 和 {Position:${b.character}|x=...|z=...}，保持间距 ≥ 1.5`,
+                'BUG-VIS-CHAR-OVERLAP'
+              );
+            } else if (distance < 2.0) {
+              this.addIssue('warning',
+                `场景 ${scene} 中角色 ${a.character} 和 ${b.character} 间距过近（距离 ${distance.toFixed(2)}），可能画面拥挤`,
+                a.entry?.startTime ?? b.entry?.startTime,
+                `适当拉开 {Position:${a.character}} 和 {Position:${b.character}} 的距离`,
+                'BUG-VIS-CHAR-CLOSE'
+              );
+            }
           }
         }
       }
@@ -274,6 +278,7 @@ export class VisualInspector extends InspectorBase {
   _hasPositionInScene(entries, targetEntry) {
     const scene = targetEntry.scene;
     if (!scene) return true; // 无场景声明，无法判断
+    if (targetEntry.character === 'Narrator') return true; // 旁白不需要在画面中出现
 
     // 找到该场景的所有条目
     const sceneEntries = entries.filter((e) => e.scene === scene);

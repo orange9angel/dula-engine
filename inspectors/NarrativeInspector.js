@@ -28,6 +28,7 @@ export class NarrativeInspector extends InspectorBase {
     this._checkActionTargets(entries);
     this._checkPositionEnvironmentConsistency(entries);
     this._checkActionReasonability(entries, storyText);
+    this._checkMentionedEntities(entries, storyText, episodeDir);
     // this._checkNoLazyShortcuts(entries, storyText);  // TODO: implement
   }
 
@@ -391,5 +392,158 @@ export class NarrativeInspector extends InspectorBase {
         }
       }
     }
+  }
+
+  /**
+   * 检查台词中提及的实体（角色、生物、对象）是否实际在场或注册
+   * 例如：台词说"大恐龙来了"但场景中只有 BabyDino，应报错
+   */
+  _checkMentionedEntities(entries, storyText, episodeDir) {
+    // 1. 从 bootstrap.js 提取注册的角色名
+    const bootstrapText = this._readBootstrap(episodeDir);
+    const registeredChars = new Set();
+    const charRegex = /registerCharacter\(['"`]([^'"`]+)['"`]/g;
+    let m;
+    while ((m = charRegex.exec(bootstrapText)) !== null) {
+      registeredChars.add(m[1]);
+    }
+    // 也包含 dula-assets 已知的官方角色
+    const officialChars = new Set([
+      'Doraemon', 'Nobita', 'Shizuka', 'RockLee', 'Seiya', 'Shiryu', 'Hyoga', 'Shun', 'Ikki', 'Aiolos',
+      'Xingzai', 'Xiaoyue', 'SheRa', 'Adora', 'Catra', 'Hordak', 'ShadowWeaver',
+      'Ultraman', 'Gabura', 'Shota', 'Yusuke', 'Kuwabara', 'Yokai',
+      'Zorak', 'Klaw', 'Vex', 'Rex', 'DiscoWorm',
+      'Reporter', 'Cameraman', 'Cameraman2', 'Cameraman3',
+    ]);
+    for (const c of officialChars) registeredChars.add(c);
+
+    // 2. 实体提及规则：关键词 -> 期望在场的角色名或对象
+    const entityRules = [
+      {
+        regex: /大恐龙|成年恐龙|恐龙妈妈|母恐龙|巨大恐龙/,
+        entityName: '大恐龙',
+        expectedChars: ['BigDino', 'MotherDino', 'AdultDino', 'Trex', 'Tyrannosaurus'],
+        severity: 'error',
+      },
+      {
+        regex: /小恐龙|宝宝恐龙|恐龙宝宝|幼龙/,
+        entityName: '小恐龙',
+        expectedChars: ['BabyDino', 'LittleDino'],
+        severity: 'error',
+      },
+      {
+        regex: /火山/,
+        entityName: '火山',
+        expectedSceneProps: ['volcano'],
+        severity: 'warning',
+      },
+      {
+        regex: /任意门|时光门|传送门/,
+        entityName: '任意门',
+        expectedSceneProps: ['anywhereDoor', 'door'],
+        severity: 'warning',
+      },
+      {
+        regex: /怪兽|怪物|巨人/,
+        entityName: '怪兽/怪物',
+        expectedChars: ['Monster', 'Gabura', 'Yokai', 'Hordak'],
+        severity: 'error',
+      },
+    ];
+
+    // 3. 收集每个场景实际出现的角色
+    const sceneChars = new Map(); // sceneName -> Set(charName)
+    let currentScene = null;
+    for (const entry of entries) {
+      if (entry.scene) currentScene = entry.scene;
+      if (!currentScene) continue;
+
+      if (!sceneChars.has(currentScene)) sceneChars.set(currentScene, new Set());
+      const set = sceneChars.get(currentScene);
+
+      if (entry.character) set.add(entry.character);
+      if (entry.positionOps) {
+        for (const po of entry.positionOps) {
+          if (po.character) set.add(po.character);
+        }
+      }
+      if (entry.storyEvents) {
+        for (const ev of entry.storyEvents) {
+          if (ev.options?.character) set.add(ev.options.character);
+        }
+      }
+    }
+
+    // 4. 扫描台词
+    for (const entry of entries) {
+      if (!entry.text) continue;
+      const text = entry.text;
+
+      for (const rule of entityRules) {
+        if (!rule.regex.test(text)) continue;
+
+        const entryScene = entry.scene || this._findEntryScene(entries, entry);
+
+        // 检查是否有期望的角色在场
+        let hasChar = false;
+        if (rule.expectedChars) {
+          const charsInScene = entryScene ? sceneChars.get(entryScene) : null;
+          hasChar = rule.expectedChars.some((name) => registeredChars.has(name) && charsInScene?.has(name));
+        }
+
+        // 检查是否有期望的场景道具
+        let hasProp = false;
+        if (rule.expectedSceneProps) {
+          hasProp = this._checkSceneHasProp(entryScene, rule.expectedSceneProps, episodeDir);
+        }
+
+        if (!hasChar && !hasProp) {
+          this.addIssue(
+            rule.severity,
+            `台词提及"${rule.entityName}"，但当前场景无对应角色/道具: "${text}"`,
+            entry.startTime,
+            rule.expectedChars
+              ? `注册并放置角色（如 {Position:${rule.expectedChars[0]}|x=...|z=...}）`
+              : `在场景中实现 ${rule.expectedSceneProps.join('/')} 道具`,
+            'BUG-NARR-MENTIONED-ENTITY-MISSING'
+          );
+        }
+      }
+    }
+  }
+
+  _readBootstrap(episodeDir) {
+    const p = path.join(episodeDir, 'bootstrap.js');
+    return fs.existsSync(p) ? fs.readFileSync(p, 'utf-8') : '';
+  }
+
+  _findEntryScene(entries, targetEntry) {
+    let scene = null;
+    for (const entry of entries) {
+      if (entry.scene) scene = entry.scene;
+      if (entry === targetEntry) return scene;
+    }
+    return null;
+  }
+
+  _checkSceneHasProp(sceneName, propNames, episodeDir) {
+    if (!sceneName) return false;
+
+    const candidates = [
+      path.join(episodeDir, 'scenes', `${sceneName}.js`),
+      path.join(episodeDir, 'bootstrap.js'),
+      path.resolve(episodeDir, '..', '..', '..', 'dula-assets', 'scenes', `${sceneName}.js`),
+    ];
+
+    for (const file of candidates) {
+      if (!fs.existsSync(file)) continue;
+      const text = fs.readFileSync(file, 'utf-8');
+      for (const name of propNames) {
+        const regex = new RegExp(`\\b${name}\\b`, 'i');
+        if (regex.test(text)) return true;
+      }
+    }
+
+    return false;
   }
 }

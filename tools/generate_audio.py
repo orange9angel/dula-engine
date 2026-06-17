@@ -400,11 +400,16 @@ def parse_story(text):
         if voice_match:
             voice_emotion = voice_match.group(1).strip()
 
-        dialogue = re.sub(r"^@\w+\s*", "", content)
+        # Strip scene declaration line (@SceneName{...}) entirely from dialogue
+        dialogue = re.sub(r"^@\w+(?:\{[^}]*\})*\s*", "", content)
         dialogue = re.sub(r"\[\w+\]\s*", "", dialogue)
         dialogue = re.sub(r"\{Camera:[^}]+\}\s*", "", dialogue)
         dialogue = re.sub(r"\{Music:[^}]+\}\s*", "", dialogue)
         dialogue = re.sub(r"\{Voice:[^}]+\}\s*", "", dialogue)
+        dialogue = re.sub(r"\{SFX:[^}]+\}\s*", "", dialogue)
+        dialogue = re.sub(r"\{Event:[^}]+\}\s*", "", dialogue)
+        dialogue = re.sub(r"\{Position:[^}]+\}\s*", "", dialogue)
+        dialogue = re.sub(r"\{Transition:[^}]+\}\s*", "", dialogue)
         dialogue = re.sub(r"\{[A-Za-z]\w*:[^}]+\}\s*", "", dialogue)
         dialogue = re.sub(r"\{Hitstop\|[^}]+\}\s*", "", dialogue)
         dialogue = re.sub(r"\{FX[^}]+\}\s*", "", dialogue)
@@ -715,11 +720,12 @@ def generate_takecopter_spin(filepath, duration=2.0, sample_rate=48000):
 
 
 def discover_manual_sfx():
-    """Scan materials/sfx/, materials/audio/, and assets/audio/sfx/ for sound effects."""
+    """Scan materials/sfx/, materials/audio/, assets/audio/sfx/, and assets/audio/music/ for sound effects."""
     sfx_dirs = [
         os.path.join(EPISODE, "materials", "sfx"),
         os.path.join(EPISODE, "materials", "audio"),
         os.path.join(EPISODE, "assets", "audio", "sfx"),
+        os.path.join(EPISODE, "assets", "audio", "music"),
     ]
     found = {}
     for d in sfx_dirs:
@@ -872,9 +878,10 @@ def schedule_sfx_from_events(story_events, manual_sfx):
                     scheduled.append({"file": sfx_file, "startTime": t})
 
         elif etype == "SFX":
-            # Parse SFX body: Play|name=xxx|offset=1.5
+            # Parse SFX body: Play|name=xxx|offset=1.5|startTime=0|endTime=52|baseVolume=0.25
             sfx_name = None
             offset = 0.0
+            sfx_options = {}
             if "|" in body:
                 parts = body.split("|")
                 if parts[0] == "Play" and len(parts) > 1:
@@ -890,11 +897,23 @@ def schedule_sfx_from_events(story_events, manual_sfx):
                                     offset = float(v)
                                 except ValueError:
                                     pass
+                            else:
+                                # Store other options like startTime, endTime, baseVolume
+                                try:
+                                    sfx_options[k] = float(v)
+                                except ValueError:
+                                    sfx_options[k] = v
             if not sfx_name:
                 sfx_name = body
             sfx_file = find_sfx(sfx_name)
             if sfx_file:
-                scheduled.append({"file": sfx_file, "startTime": t + offset})
+                event = {"file": sfx_file, "startTime": t + offset}
+                # Pass through optional parameters for ambient/long SFX
+                if "endTime" in sfx_options:
+                    event["endTime"] = sfx_options["endTime"]
+                if "baseVolume" in sfx_options:
+                    event["volume"] = sfx_options["baseVolume"]
+                scheduled.append(event)
 
     return scheduled
 
@@ -1097,10 +1116,26 @@ def mix_audio(manifest, bgm_path=None, sfx_events=None):
         filters = []
         n_sfx = len(sfx_events)
         for i, sfx in enumerate(sfx_events):
-            inputs.append(sfx["file"])
+            sfx_file = sfx["file"]
             delay_ms = int(round(sfx["startTime"] * 1000))
             # Pre-scale each SFX to compensate for amix normalize
             vol = sfx.get("volume", 1.0)
+            # Support looping for ambient/long SFX (endTime > file duration)
+            end_time = sfx.get("endTime")
+            if end_time and end_time > 0:
+                duration_sec = end_time - sfx["startTime"]
+                # Pre-process: loop the file to required duration using stream_loop
+                looped_path = os.path.join(OUTPUT_DIR, f"_looped_sfx_{i}.wav")
+                loop_cmd = [
+                    "ffmpeg", "-y", "-stream_loop", "-1", "-i", sfx_file,
+                    "-t", str(duration_sec),
+                    "-acodec", "pcm_s16le", "-ar", "48000",
+                    looped_path
+                ]
+                subprocess.run(loop_cmd, capture_output=True, check=True)
+                sfx_file = looped_path
+
+            inputs.append(sfx_file)
             filters.append(f"[{i}:a]adelay={delay_ms}|{delay_ms},volume={vol}[s{i}]")
 
         amix_inputs = "".join(f"[s{i}]" for i in range(n_sfx))

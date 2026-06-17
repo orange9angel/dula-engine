@@ -1,4 +1,4 @@
-﻿import { InspectorBase } from './InspectorBase.js';
+import { InspectorBase } from './InspectorBase.js';
 import fs from 'fs';
 import path from 'path';
 
@@ -127,10 +127,11 @@ export class SpeakingAnimationInspector extends InspectorBase {
    */
   _collectSpeakingCharacters(entries) {
     const chars = new Set();
+    const narrationOnlyChars = new Set(['Narrator']);
     for (const entry of entries) {
       // StoryParser uses 'dialogue' for text content, not 'text'
       const text = entry.text || entry.dialogue || '';
-      if (entry.character && text.trim()) {
+      if (entry.character && text.trim() && !narrationOnlyChars.has(entry.character)) {
         chars.add(entry.character);
       }
     }

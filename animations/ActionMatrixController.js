@@ -1,4 +1,4 @@
-﻿import { PoseMatrix, getPoseType, getDefaultPhase, ActionPhase, PoseType } from './PoseMatrix.js';
+import { PoseMatrix, getPoseType, getDefaultPhase, ActionPhase, PoseType } from './PoseMatrix.js';
 import { JointConstraintSystem } from '../constraints/JointConstraintSystem.js';
 
 /**
@@ -172,6 +172,7 @@ export class ActionMatrixController {
     this.currentPose = finalPose;
     this._applyPose(finalPose);
     // 应用关节约束（速度平滑 + 硬限制 + 防穿模）
+    // otherCharacters 会在 SceneBase.update 中统一传入，这里不传以避免重复
     if (this._constraintSystem) {
       this._constraintSystem.enforce(delta);
     }
@@ -464,7 +465,7 @@ export class ActionMatrixController {
     };
 
     this._applyPose(idlePose);
-    // 应用关节约束
+    // 应用关节约束（SceneBase.update 中会统一传入其他角色做角色间碰撞，这里做无其他角色时的兜底）
     if (this._constraintSystem) {
       this._constraintSystem.enforce(delta);
     }

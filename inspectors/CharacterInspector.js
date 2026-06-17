@@ -55,32 +55,37 @@ export class CharacterInspector extends InspectorBase {
     }
 
     // Check character registry
-    const knownChars = ['Doraemon', 'Nobita', 'Shizuka', 'Xiaoyue', 'Xingzai', 'RockLee', 'SheRa', 'Adora', 'Catra', 'Hordak', 'Kagome'];
+    const knownChars = ['Doraemon', 'Nobita', 'Shizuka', 'Xiaoyue', 'Xingzai', 'RockLee', 'SheRa', 'Adora', 'Catra', 'Hordak', 'Kagome', 'Narrator'];
+    // 旁白/纯语音角色不需要在场景中存在，单独处理
+    const narrationOnlyChars = new Set(['Narrator']);
+
     for (const charName of characters) {
+      const isNarrationOnly = narrationOnlyChars.has(charName);
       const isRegistered = registeredChars.has(charName) || knownChars.includes(charName);
       if (!isRegistered && registeredChars.size > 0) {
         this.addIssue('error', `角色 ${charName} 未在 CharacterRegistry 中注册`, null, `在 bootstrap.js 中注册 ${charName}`);
       }
 
-      // Voice config coverage
-      if (Object.keys(voiceConfig).length > 0 && !voiceConfig[charName]) {
+      // Voice config coverage（旁白角色可选，不强制）
+      if (!isNarrationOnly && Object.keys(voiceConfig).length > 0 && !voiceConfig[charName]) {
         this.addIssue('warning', `角色 ${charName} 缺少 voice_config.json 声线配置`, null, `在 config/voice_config.json 中添加 ${charName} 的声线`);
       }
 
       const scenes = characterScenes.get(charName);
-      if (scenes && scenes.size > 1) {
+      if (scenes && scenes.size > 1 && !isNarrationOnly) {
         this.addIssue('info', `角色 ${charName} 出现在 ${scenes.size} 个场景中`, null, '确保场景切换时角色位置正确');
       }
 
       const lineCount = entries.filter((e) => e.character === charName).length;
-      if (lineCount === 1) {
+      if (lineCount === 1 && !isNarrationOnly) {
         this.addIssue('info', `角色 ${charName} 只有 1 句台词`, null, '考虑增加角色戏份或移除');
       }
     }
 
     // Check for characters appearing late in scene
     for (const [sceneName, chars] of sceneCharacters) {
-      const sorted = chars.sort((a, b) => a.firstTime - b.firstTime);
+      const sorted = chars.filter((c) => !narrationOnlyChars.has(c.char)).sort((a, b) => a.firstTime - b.firstTime);
+      if (sorted.length === 0) continue;
       const firstChar = sorted[0];
       for (let i = 1; i < sorted.length; i++) {
         const laterChar = sorted[i];
@@ -124,6 +129,7 @@ export class CharacterInspector extends InspectorBase {
     const sceneSequence = [];
     let currentScene = null;
     const sceneChars = new Map(); // scene -> Set(characters)
+    const narrationOnlyChars = new Set(['Narrator']);
 
     for (const entry of entries) {
       if (entry.scene && entry.scene !== currentScene) {
@@ -134,7 +140,7 @@ export class CharacterInspector extends InspectorBase {
           firstEntry: entry,
         });
       }
-      if (entry.character && currentScene) {
+      if (entry.character && currentScene && !narrationOnlyChars.has(entry.character)) {
         if (!sceneChars.has(currentScene)) {
           sceneChars.set(currentScene, new Set());
         }
@@ -175,7 +181,7 @@ export class CharacterInspector extends InspectorBase {
       const continuingChars = [...prevChars].filter((c) => currChars.has(c));
       // Position tags may be on the scene declaration line (@Scene) or on separate config lines
       // We need to scan the raw story text around the scene switch
-      const sceneSwitchLine = this._findSceneLine(storyText, curr.scene);
+      const sceneSwitchLine = curr.firstEntry?.line ? curr.firstEntry.line - 1 : this._findSceneLine(storyText, curr.scene);
       const linesAroundSwitch = storyText.split('\n').slice(Math.max(0, sceneSwitchLine - 1), sceneSwitchLine + 4);
       const rawTextAround = linesAroundSwitch.join(' ');
       for (const char of continuingChars) {

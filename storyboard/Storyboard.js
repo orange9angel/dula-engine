@@ -252,6 +252,7 @@ export class Storyboard {
     // Extract story-level choreography from .story DSL tags early
     // so switchScene can apply placements & props for the initial scene.
     this.storyPlacements = [];
+    this._appliedPlacementIndices = new Set();
     this.storyProps = [];
     this.storyBallEvents = [];
     this.storyEvents = [];
@@ -298,6 +299,7 @@ export class Storyboard {
         for (const ev of entry.storyEvents) {
           this.storyEvents.push({
             type: ev.name.toLowerCase(),
+            scene: sceneCursor,
             character: ev.options.character,
             startTime: entry.startTime,
             duration: ev.options.duration,
@@ -676,6 +678,32 @@ export class Storyboard {
       }
     }
 
+    // Build per-scene door event map so events are scheduled on whichever
+    // scene instance is active when the switch happens (including recreated scenes).
+    this.doorEventsByScene = new Map();
+    this._doorEventsScheduledScenes = new Set();
+    for (const ev of this.storyEvents) {
+      if (ev.type === 'doorevent') {
+        const sceneName = ev.scene || this.currentSceneName || 'RoomScene';
+        if (!this.doorEventsByScene.has(sceneName)) {
+          this.doorEventsByScene.set(sceneName, []);
+        }
+        this.doorEventsByScene.get(sceneName).push({
+          action: ev.options.action,
+          startTime: ev.startTime,
+          duration: ev.options.duration,
+        });
+      }
+    }
+    // Schedule door events for the initial scene now that the map is ready.
+    const initialDoorSceneName = this.currentSceneName || 'RoomScene';
+    if (this.currentScene && this.currentScene.scheduleDoorEvent && !this._doorEventsScheduledScenes.has(initialDoorSceneName)) {
+      for (const ev of this.doorEventsByScene.get(initialDoorSceneName) || []) {
+        this.currentScene.scheduleDoorEvent(ev);
+      }
+      this._doorEventsScheduledScenes.add(initialDoorSceneName);
+    }
+
     // Tennis ball & swing choreography is handled in switchScene('ParkScene')
     // via CourtDirector, so that trajectories are computed from actual positions.
 
@@ -752,6 +780,15 @@ export class Storyboard {
 
     this.currentScene = newScene;
     this.currentSceneName = sceneName;
+
+    // Schedule door events for this scene instance (supports recreated scenes).
+    if (this.doorEventsByScene && newScene && newScene.scheduleDoorEvent && !this._doorEventsScheduledScenes.has(sceneName)) {
+      for (const ev of this.doorEventsByScene.get(sceneName) || []) {
+        newScene.scheduleDoorEvent(ev);
+      }
+      this._doorEventsScheduledScenes.add(sceneName);
+    }
+
     // console.log('[switchScene] after migrate, chars in', sceneName, ':', this.currentScene.characters.map(c => c.constructor.name).join(','));
 
     // Generic placements from story (x/y/z, no court spot) — apply BEFORE arrangeCharacters
@@ -1094,6 +1131,67 @@ export class Storyboard {
     }
   }
 
+  /**
+   * Apply story placements whose start time has passed and that haven't been
+   * applied yet. This makes per-entry {Position:...} tags take effect during
+   * playback/verification even when the scene does not switch.
+   */
+  _applyStoryPlacementsAtTime(t) {
+    if (!this.storyPlacements) return;
+    const sceneName = this.currentSceneName;
+    if (!sceneName) return;
+
+    // First pass: set positions
+    for (let i = 0; i < this.storyPlacements.length; i++) {
+      const p = this.storyPlacements[i];
+      if (p.scene !== sceneName) continue;
+      if (p.startTime !== undefined && p.startTime > t) continue;
+      if (this._appliedPlacementIndices.has(i)) continue;
+
+      const char = this.characters.get(p.character);
+      if (!char) continue;
+      if (p.x !== undefined && p.z !== undefined) {
+        char.setPosition(p.x, p.y !== undefined ? p.y : 0, p.z);
+      }
+      this._appliedPlacementIndices.add(i);
+    }
+
+    // Second pass: apply faces (after all positions are set)
+    for (let i = 0; i < this.storyPlacements.length; i++) {
+      const p = this.storyPlacements[i];
+      if (p.scene !== sceneName) continue;
+      if (p.startTime !== undefined && p.startTime > t) continue;
+      if (!p.face) continue;
+
+      const char = this.characters.get(p.character);
+      if (!char) continue;
+      if (p.face === 'center') {
+        const dx = 0 - char.mesh.position.x;
+        const dz = 0 - char.mesh.position.z;
+        char.mesh.rotation.y = Math.atan2(dx, dz);
+      } else if (p.face === 'forward' || p.face === 'camera') {
+        char.mesh.lookAt(char.mesh.position.x, char.mesh.position.y, char.mesh.position.z + 5);
+      } else if (p.face === 'back') {
+        char.mesh.rotation.y = Math.PI;
+      } else if (p.face === 'left') {
+        char.mesh.rotation.y = -Math.PI / 2;
+      } else if (p.face === 'right') {
+        char.mesh.rotation.y = Math.PI / 2;
+      } else {
+        const targetChar = this.characters.get(p.face);
+        if (targetChar) {
+          const dx = targetChar.mesh.position.x - char.mesh.position.x;
+          const dz = targetChar.mesh.position.z - char.mesh.position.z;
+          char.mesh.rotation.y = Math.atan2(dx, dz);
+        } else {
+          const dx = 0 - char.mesh.position.x;
+          const dz = 0 - char.mesh.position.z;
+          char.mesh.rotation.y = Math.atan2(dx, dz);
+        }
+      }
+    }
+  }
+
   play() {
     if (this.isPlaying) return;
     if (this.audioContext.state === 'suspended') {
@@ -1169,6 +1267,10 @@ export class Storyboard {
     if (targetScene && targetScene !== this.currentSceneName) {
       this.switchScene(targetScene, true, t);
     }
+
+    // Apply per-entry {Position:...} placements at their scheduled times.
+    // This is needed even when the scene does not change.
+    this._applyStoryPlacementsAtTime(t);
 
     // Transition effects
     this._updateTransitions(t);

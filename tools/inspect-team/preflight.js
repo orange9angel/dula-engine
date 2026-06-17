@@ -19,6 +19,21 @@ export function runPreflight(context) {
 
   const { entries, storyText, episodeDir, configDir, audioDir } = context;
 
+  // ── 0. 读取 bootstrap.js 提取运行时注册的自定义资产 ──
+  const bootstrapPath = path.join(episodeDir, 'bootstrap.js');
+  const bootstrapText = fs.existsSync(bootstrapPath) ? fs.readFileSync(bootstrapPath, 'utf-8') : '';
+
+  const registeredScenes = new Set();
+  const registeredChars = new Set();
+  const registeredAnims = new Set();
+  const registerSceneRegex = /registerScene\(['"`]([^'"`]+)['"`]/g;
+  const registerCharRegex = /registerCharacter\(['"`]([^'"`]+)['"`]/g;
+  const registerAnimRegex = /registerAnimation\(['"`]([^'"`]+)['"`]/g;
+  let rm;
+  while ((rm = registerSceneRegex.exec(bootstrapText)) !== null) registeredScenes.add(rm[1]);
+  while ((rm = registerCharRegex.exec(bootstrapText)) !== null) registeredChars.add(rm[1]);
+  while ((rm = registerAnimRegex.exec(bootstrapText)) !== null) registeredAnims.add(rm[1]);
+
   // ── 1. 场景检查 ──
   const scenes = new Set();
   const sceneMatches = storyText.matchAll(/^@(\w+)/gm);
@@ -28,13 +43,13 @@ export function runPreflight(context) {
   const customScenesDir = path.join(episodeDir, 'scenes');
 
   for (const scene of scenes) {
-    const hasCustomScene = fs.existsSync(path.join(customScenesDir, `${scene}.js`));
+    const hasCustomScene = fs.existsSync(path.join(customScenesDir, `${scene}.js`)) || registeredScenes.has(scene);
     const isKnown = knownScenes.includes(scene);
     const status = hasCustomScene || isKnown ? '✅' : '❌';
     checklist.push({ category: '场景', item: scene, status, detail: hasCustomScene ? '自定义场景' : isKnown ? '官方场景' : '未找到' });
 
     if (!hasCustomScene && !isKnown) {
-      issues.push({ severity: 'error', message: `场景 "${scene}" 未找到 — 既非官方场景，也无自定义文件`, fix: `在 scenes/${scene}.js 创建场景，或改用已知场景: ${knownScenes.join(', ')}` });
+      issues.push({ severity: 'error', message: `场景 "${scene}" 未找到 — 既非官方场景，也无自定义文件`, fix: `在 scenes/${scene}.js 创建场景，或在 bootstrap.js 中 registerScene('${scene}', ...)` });
     }
   }
 
@@ -48,17 +63,21 @@ export function runPreflight(context) {
   const charMatches = storyText.matchAll(/^\[([A-Z][a-zA-Z0-9_]*)\]/gm);
   for (const m of charMatches) characters.add(m[1]);
 
-  const knownChars = ['Doraemon', 'Nobita', 'Shizuka', 'Xiaoyue', 'Xingzai', 'RockLee', 'SheRa', 'Adora', 'Catra', 'Hordak', 'Kagome'];
+  // 也检查 {Position:Name|...} 中引用的角色
+  const positionCharMatches = storyText.matchAll(/\{Position:([A-Z][a-zA-Z0-9_]*)/g);
+  for (const m of positionCharMatches) characters.add(m[1]);
+
+  const knownChars = ['Doraemon', 'Nobita', 'Shizuka', 'Xiaoyue', 'Xingzai', 'RockLee', 'SheRa', 'Adora', 'Catra', 'Hordak', 'Kagome', 'Narrator'];
   const customCharsDir = path.join(episodeDir, 'characters');
 
   for (const char of characters) {
-    const hasCustomChar = fs.existsSync(path.join(customCharsDir, `${char}.js`));
+    const hasCustomChar = fs.existsSync(path.join(customCharsDir, `${char}.js`)) || registeredChars.has(char);
     const isKnown = knownChars.includes(char);
     const status = hasCustomChar || isKnown ? '✅' : '❌';
     checklist.push({ category: '角色', item: char, status, detail: hasCustomChar ? '自定义角色' : isKnown ? '官方角色' : '未找到' });
 
     if (!hasCustomChar && !isKnown) {
-      issues.push({ severity: 'error', message: `角色 "${char}" 未找到 — 既非官方角色，也无自定义文件`, fix: `在 characters/${char}.js 创建角色，或改用已知角色: ${knownChars.join(', ')}` });
+      issues.push({ severity: 'error', message: `角色 "${char}" 未找到 — 既非官方角色，也无自定义文件`, fix: `在 characters/${char}.js 创建角色，或在 bootstrap.js 中 registerCharacter('${char}', ...)` });
     }
   }
 
@@ -69,12 +88,29 @@ export function runPreflight(context) {
 
   // ── 3. 动画检查 ──
   const usedAnims = new Set();
-  const animRegex = /\{([A-Z][a-zA-Z0-9]+)(?:\|[^}]*)?\}/g;
   const namespaces = ['Camera', 'Music', 'Ball', 'Prop', 'Position', 'SFX', 'Transition', 'Event', 'Dunk', 'Hitstop', 'Voice'];
+
+  // 先处理 {Character}{Action|...} 目标角色动画，记录 Character 占用的索引范围
+  const targetedRanges = [];
+  const targetedAnimRegex = /\{([A-Z][a-zA-Z0-9_]*)\}\{([A-Z][a-zA-Z0-9_]+)(?:\|[^}]*)?\}/g;
+  let tm;
+  while ((tm = targetedAnimRegex.exec(storyText)) !== null) {
+    usedAnims.add(tm[2]);
+    targetedRanges.push([tm.index, tm.index + tm[0].length]);
+  }
+
+  // 再处理普通动画标签 {Action|...}，跳过命名空间标签和 targeted 范围中的 Character 部分
+  const animRegex = /\{([A-Z][a-zA-Z0-9_]+)(?:\|[^}]*)?\}/g;
   let m;
   while ((m = animRegex.exec(storyText)) !== null) {
-    if (!namespaces.includes(m[1])) usedAnims.add(m[1]);
+    if (namespaces.includes(m[1])) continue;
+    const idx = m.index;
+    const inTargeted = targetedRanges.some(([start, end]) => idx >= start && idx < end);
+    if (inTargeted) continue;
+    usedAnims.add(m[1]);
   }
+
+  // 标准 {Animation:ActionName|...} 格式
   const nsAnimRegex = /\{Animation:([^}|]+)(?:\|[^}]*)?\}/g;
   while ((m = nsAnimRegex.exec(storyText)) !== null) {
     usedAnims.add(m[1]);
@@ -109,13 +145,13 @@ export function runPreflight(context) {
   const customAnimsDir = path.join(episodeDir, 'animations');
 
   for (const anim of usedAnims) {
-    const hasCustomAnim = fs.existsSync(path.join(customAnimsDir, `${anim}.js`));
+    const hasCustomAnim = fs.existsSync(path.join(customAnimsDir, `${anim}.js`)) || registeredAnims.has(anim);
     const isKnown = knownAnims.has(anim);
     const status = hasCustomAnim || isKnown ? '✅' : '❌';
     checklist.push({ category: '动画', item: anim, status, detail: hasCustomAnim ? '自定义动画' : isKnown ? '官方动画' : '未注册' });
 
     if (!hasCustomAnim && !isKnown) {
-      issues.push({ severity: 'error', message: `动画 "${anim}" 未注册`, fix: `在 animations/${anim}.js 创建动画，或改用已知动画` });
+      issues.push({ severity: 'error', message: `动画 "${anim}" 未注册`, fix: `在 animations/${anim}.js 创建动画，或在 bootstrap.js 中 registerAnimation('${anim}', ...)` });
     }
   }
 
@@ -128,7 +164,13 @@ export function runPreflight(context) {
     issues.push({ severity: 'warning', message: '缺少 voice_config.json', fix: '创建 config/voice_config.json 配置角色声线' });
   } else {
     const voiceConfig = JSON.parse(fs.readFileSync(voiceConfigPath, 'utf-8'));
+    // 只对实际说话的角色（[Character]）检查声线；Position-only 角色（如动物）不需要 TTS
+    const speakingChars = new Set();
+    const speakingMatches = storyText.matchAll(/^\[([A-Z][a-zA-Z0-9_]*)\]/gm);
+    for (const m of speakingMatches) speakingChars.add(m[1]);
+
     for (const char of characters) {
+      if (!speakingChars.has(char)) continue;
       if (!voiceConfig[char]) {
         checklist.push({ category: '配音', item: char, status: '❌', detail: '未配置声线' });
         issues.push({ severity: 'warning', message: `角色 ${char} 缺少声线配置`, fix: `在 voice_config.json 中添加 ${char} 的 TTS 声线` });
@@ -171,7 +213,6 @@ export function runPreflight(context) {
   }
 
   // ── 7. bootstrap.js 检查 ──
-  const bootstrapPath = path.join(episodeDir, 'bootstrap.js');
   const hasBootstrap = fs.existsSync(bootstrapPath);
   checklist.push({ category: '配置', item: 'bootstrap.js', status: hasBootstrap ? '✅' : '❌', detail: hasBootstrap ? '已配置' : '缺失' });
 

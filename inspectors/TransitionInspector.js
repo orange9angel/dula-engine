@@ -157,8 +157,10 @@ export class TransitionInspector extends InspectorBase {
 
   _buildSceneCharacters(entries) {
     const map = new Map(); // scene -> Set(characters)
+    const narrationOnlyChars = new Set(['Narrator']);
     for (const entry of entries) {
       if (!entry.scene || !entry.character) continue;
+      if (narrationOnlyChars.has(entry.character)) continue;
       if (!map.has(entry.scene)) map.set(entry.scene, new Set());
       map.get(entry.scene).add(entry.character);
     }

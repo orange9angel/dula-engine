@@ -203,20 +203,25 @@ export class TimelineTraceInspector extends InspectorBase {
         const distance = Math.sqrt(dx * dx + dz * dz);
         const timeGap = curr.startTime - prev.endTime;
 
-        // Check for teleport (large jump in short time without Move event)
-        if (distance > 3.0 && timeGap < 0.5) {
-          // Check if there's a Move event explaining this
-          const hasMove = entries.some((e) =>
-            e.startTime >= prev.startTime && e.startTime <= curr.startTime &&
-            e.storyEvents?.some((ev) => ev.name === 'Move' && ev.options?.character === char)
-          );
-          if (!hasMove) {
-            this.addIssue('warning',
-              `${char} 在 ${prev.endTime.toFixed(1)}s -> ${curr.startTime.toFixed(1)}s 间瞬移了 ${distance.toFixed(2)}m（无 Move 事件）。角色位置突变会让观众困惑`,
-              curr.startTime,
-              `添加 {Event:Move|character=${char}|x=${currPos.x.toFixed(1)}|z=${currPos.z.toFixed(1)}|duration=1.0} 实现平滑移动`,
-              'D16-TELEPORT'
+        // Skip teleport checks across scene changes — transitions/fades handle position changes
+        if (prev.scene === curr.scene) {
+          // Check for teleport (large jump in very short positive time without Move event)
+          // Negative/zero time gaps usually mean the position tag sits inside/overlapping the previous entry,
+          // which the engine handles correctly; do not flag those.
+          if (distance > 3.0 && timeGap > 0 && timeGap < 0.3) {
+            // Check if there's a Move event explaining this
+            const hasMove = entries.some((e) =>
+              e.startTime >= prev.startTime && e.startTime <= curr.startTime &&
+              e.storyEvents?.some((ev) => ev.name === 'Move' && ev.options?.character === char)
             );
+            if (!hasMove) {
+              this.addIssue('warning',
+                `${char} 在 ${prev.endTime.toFixed(1)}s -> ${curr.startTime.toFixed(1)}s 间瞬移了 ${distance.toFixed(2)}m（无 Move 事件）。角色位置突变会让观众困惑`,
+                curr.startTime,
+                `添加 {Event:Move|character=${char}|x=${currPos.x.toFixed(1)}|z=${currPos.z.toFixed(1)}|duration=1.0} 实现平滑移动`,
+                'D16-TELEPORT'
+              );
+            }
           }
         }
 

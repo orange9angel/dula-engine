@@ -46,5 +46,15 @@ export class SceneBase {
     for (const c of this.characters) {
       c.update(time, delta);
     }
+
+    // 统一应用身体约束（防穿模 + 关节限制 + 速度平滑）
+    // 在角色 update 之后执行，确保对矩阵动画和非矩阵动画都生效
+    for (const c of this.characters) {
+      const am = c._actionMatrix;
+      if (am && am._constraintSystem) {
+        const others = this.characters.filter((other) => other !== c);
+        am._constraintSystem.enforce(delta, others);
+      }
+    }
   }
 }

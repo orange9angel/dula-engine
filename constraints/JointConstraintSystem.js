@@ -120,8 +120,9 @@ export class JointConstraintSystem {
    * 注意：这个方法在 _applyPose 之后调用，直接修改 Three.js 对象的旋转值
    *
    * @param {number} deltaTime - 时间步长（秒）
+   * @param {CharacterBase[]} otherCharacters - 其他角色实例，用于角色间碰撞检测
    */
-  enforce(deltaTime = 0.016) {
+  enforce(deltaTime = 0.016, otherCharacters = null) {
     const c = this.character;
 
     // === 第1层：速度平滑 ===
@@ -201,9 +202,19 @@ export class JointConstraintSystem {
     // === 第3层：防穿模 ===
     // 检测肢体是否进入身体碰撞体，必要时调整旋转
     if (this._config.enableCollisionGuard) {
-      const corrections = this._collisionGuard.enforce();
+      const corrections = this._collisionGuard.enforce(otherCharacters);
 
       for (const [poseName, delta] of Object.entries(corrections)) {
+        // mesh 位移（来自角色间碰撞）
+        if (poseName === 'mesh') {
+          if (c.mesh) {
+            if (delta.x) c.mesh.position.x += delta.x;
+            if (delta.y) c.mesh.position.y += delta.y;
+            if (delta.z) c.mesh.position.z += delta.z;
+          }
+          continue;
+        }
+
         const charProp = JOINT_NAME_MAP[poseName];
         const jointObj = c[charProp];
         if (!jointObj) continue;

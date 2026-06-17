@@ -98,8 +98,13 @@ export class AudioInspector extends InspectorBase {
         const expectedDuration = (entry.endTime || entry.startTime + 3) - entry.startTime;
         const diff = Math.abs(audioDuration - expectedDuration);
 
-        if (diff > 1.0) {
+        // 音频比窗口长才是真正的风险（抢拍/重叠），已在 _checkAudioOverlap 处理
+        // 音频比窗口短是正常的，因为时间窗口还包含动作和停顿
+        if (audioDuration > expectedDuration + 1.0) {
           this.addIssue('warning', `音频时长不匹配: ${audioFile} (音频 ${audioDuration.toFixed(2)}s vs 台词 ${expectedDuration.toFixed(2)}s)`, entry.startTime, '检查 TTS 生成或调整台词时长');
+        } else if (audioDuration < expectedDuration - 1.0) {
+          // 音频明显短于窗口：仅提示，不警告
+          this.addIssue('info', `音频时长偏差: ${audioFile} (音频 ${audioDuration.toFixed(2)}s 短于窗口 ${expectedDuration.toFixed(2)}s)`, entry.startTime, '如需要可缩短时间窗口');
         } else if (diff > 0.3) {
           this.addIssue('info', `音频时长偏差: ${audioFile} (偏差 ${diff.toFixed(2)}s)`, entry.startTime, '微调台词时长以匹配音频');
         }
@@ -171,21 +176,24 @@ export class AudioInspector extends InspectorBase {
         }
       }
 
-      // Check for duplicate character files (same character, multiple numbered files)
-      const charFileMap = new Map(); // char -> [{file, num}]
+      // Check for duplicate character files (same character + same number but different format, or same file repeated)
+      const charNumFileMap = new Map(); // char -> Map(num -> Set(files))
       for (const file of audioFiles) {
         const match = file.match(/^(\d+)_(\w+)\.(mp3|wav)$/);
         if (match) {
           const num = parseInt(match[1], 10);
           const char = match[2];
-          if (!charFileMap.has(char)) charFileMap.set(char, []);
-          charFileMap.get(char).push({ file, num });
+          if (!charNumFileMap.has(char)) charNumFileMap.set(char, new Map());
+          const numMap = charNumFileMap.get(char);
+          if (!numMap.has(num)) numMap.set(num, new Set());
+          numMap.get(num).add(file);
         }
       }
-      for (const [char, files] of charFileMap) {
-        if (files.length > 1) {
-          const nums = files.map((f) => f.num).sort((a, b) => a - b);
-          this.addIssue('warning', `角色 ${char} 有 ${files.length} 个音频文件 (${files.map((f) => f.file).join(', ')})，可能导致混音时台词重复`, null, '删除多余文件，只保留与 manifest 对应的文件', 'BUG-AUDIO-DUPLICATE');
+      for (const [char, numMap] of charNumFileMap) {
+        for (const [num, fileSet] of numMap) {
+          if (fileSet.size > 1) {
+            this.addIssue('warning', `角色 ${char} 的台词 #${num} 有多个音频文件 (${[...fileSet].join(', ')})，可能导致混音重复`, null, '删除多余格式，只保留与 manifest 对应的文件', 'BUG-AUDIO-DUPLICATE');
+          }
         }
       }
     }

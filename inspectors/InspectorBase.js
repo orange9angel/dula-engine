@@ -167,18 +167,29 @@ export class InspectionContext {
 
   _extractRegistry(type) {
     const set = new Set();
-    // Check bootstrap.js for registerAll() call (imports from dula-assets)
-    if (this.bootstrapText.includes('registerAll')) {
-      // dula-assets registers all official assets
-      // We can't statically know them all, so we check against known lists
-      // and also scan for explicit register calls
-    }
-    // Extract explicit register calls
+    // Extract explicit register calls from bootstrap.js
     const regex = new RegExp(`register${type}\\(['"\`]([^'"\`]+)['"\`]`, 'g');
     let m;
     while ((m = regex.exec(this.bootstrapText)) !== null) {
       set.add(m[1]);
     }
+
+    // If bootstrap calls registerAll(), also scan dula-assets/index.js for official registrations
+    if (this.bootstrapText.includes('registerAll')) {
+      const possibleAssetIndexPaths = [
+        path.join(this.episodeDir, 'node_modules', 'dula-assets', 'index.js'),
+        path.join(this.episodeDir, '..', '..', '..', 'dula-assets', 'index.js'),
+      ];
+      for (const assetsIndexPath of possibleAssetIndexPaths) {
+        if (fs.existsSync(assetsIndexPath)) {
+          const assetsText = fs.readFileSync(assetsIndexPath, 'utf-8');
+          while ((m = regex.exec(assetsText)) !== null) {
+            set.add(m[1]);
+          }
+        }
+      }
+    }
+
     return set;
   }
 

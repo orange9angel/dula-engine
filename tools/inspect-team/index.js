@@ -202,6 +202,7 @@ function parseStory(text) {
   let entryIndex = 0;
 
   let currentEndTime = 0;
+  let pendingTransition = null;
 
   for (let i = 0; i < lines.length; i++) {
     const line = lines[i].trim();
@@ -238,11 +239,16 @@ function parseStory(text) {
       // Also push scene declaration as an entry so inspectors can access tags on it
       // entryIndex is set from SRT index, do not increment here
       const sceneRawText = line.substring(sceneMatch[0].length);
-      
+
       // Extract transition from scene line
       let transition = null;
       const transMatch = sceneRawText.match(/\{Transition:([^|}]+)/);
       if (transMatch) transition = transMatch[1];
+      // Also honor a standalone {Transition:...} line placed immediately before the scene line
+      if (!transition && pendingTransition) {
+        transition = pendingTransition;
+      }
+      pendingTransition = null;
       
       // Extract position ops from scene line
       const positionOps = [];
@@ -297,6 +303,8 @@ function parseStory(text) {
         .replace(/\{Event:[^}]+\}\s*/g, '')
         .replace(/\{Voice:[^}]+\}\s*/g, '')
         .replace(/\{Music:[^}]+\}\s*/g, '')
+        // Also strip bare animation tags like {FaceCry}, {Walk}, {Tremble}
+        .replace(/\{[A-Z][a-zA-Z0-9]+\}\s*/g, '')
         .trim();
 
       const srtDuration = currentEndTime - currentTime;
@@ -426,7 +434,49 @@ function parseStory(text) {
     // Time advancement only happens when we see a new SRT time line.
     // (Previous logic incorrectly advanced time for pure tag lines, causing
     // character lines in the same SRT entry to have zero duration.)
-    
+
+    // Capture standalone transition tag that appears before a scene declaration
+    if (isPureTagLine && line.includes('Transition:')) {
+      const transMatch = line.match(/\{Transition:([^|}]+)/);
+      if (transMatch) pendingTransition = transMatch[1];
+      continue;
+    }
+
+    // Pure tag lines with Event:Move — push as entries so inspectors see them
+    if (isPureTagLine && line.includes('Event:')) {
+      const storyEvents = [];
+      const eventRegex = /\{Event:([^|]+)\|([^}]+)\}/g;
+      let eventMatch;
+      while ((eventMatch = eventRegex.exec(line)) !== null) {
+        const eventName = eventMatch[1];
+        const opts = {};
+        eventMatch[2].split('|').forEach((pair) => {
+          const [k, v] = pair.split('=');
+          if (k && v !== undefined) {
+            opts[k.trim()] = isNaN(v) ? v.trim() : parseFloat(v);
+          }
+        });
+        storyEvents.push({ name: eventName, options: opts });
+      }
+      entries.push({
+        index: entryIndex,
+        line: i + 1,
+        character: null,
+        text: '',
+        rawText: line,
+        startTime: currentTime,
+        endTime: currentTime,
+        scene: currentScene,
+        animations: [],
+        propOps: [],
+        positionOps: [],
+        storyEvents,
+        camera: null,
+        transition: null,
+      });
+      continue;
+    }
+
     // Pure tag lines with Position — also push as entries for inspector visibility
     if (isPureTagLine && line.includes('Position:')) {
       // entryIndex is set from SRT index, do not increment
