@@ -547,13 +547,13 @@ export class BodyCollisionGuard {
       if (dist < minDist && dist > 0.001) {
         const overlap = minDist - dist;
         const pushDir = diff.normalize();
-        // 将推力转换为躯干/臀部调整
+        // 将推力转换为躯干/臀部调整。两边各推 0.5*overlap，刚好分离且不会过冲。
         corrections.mesh = corrections.mesh || { rx: 0, ry: 0, rz: 0, x: 0, y: 0, z: 0 };
         corrections.mesh.x = (corrections.mesh.x || 0) + pushDir.x * overlap * 0.5;
         corrections.mesh.z = (corrections.mesh.z || 0) + pushDir.z * overlap * 0.5;
 
         if (this._debugEnabled) {
-          console.log(`[BodyCollisionGuard] Inter-character collision with ${other.name}, overlap=${overlap.toFixed(3)}`);
+          console.log(`[BodyCollisionGuard] ${this.character.name} vs ${other.name}: dist=${dist.toFixed(2)} min=${minDist.toFixed(2)} overlap=${overlap.toFixed(2)} push=(${pushDir.x.toFixed(2)},${pushDir.z.toFixed(2)})`);
         }
       }
     }

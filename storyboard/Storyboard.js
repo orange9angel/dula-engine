@@ -781,12 +781,14 @@ export class Storyboard {
     this.currentScene = newScene;
     this.currentSceneName = sceneName;
 
-    // Schedule door events for this scene instance (supports recreated scenes).
-    if (this.doorEventsByScene && newScene && newScene.scheduleDoorEvent && !this._doorEventsScheduledScenes.has(sceneName)) {
+    // Schedule door events for this scene instance. switchScene always creates
+    // a fresh scene object, so we must re-schedule on every switch; otherwise
+    // door events are lost when returning to a scene (e.g. returning to the
+    // room at the end of an episode).
+    if (this.doorEventsByScene && newScene && newScene.scheduleDoorEvent) {
       for (const ev of this.doorEventsByScene.get(sceneName) || []) {
         newScene.scheduleDoorEvent(ev);
       }
-      this._doorEventsScheduledScenes.add(sceneName);
     }
 
     // console.log('[switchScene] after migrate, chars in', sceneName, ':', this.currentScene.characters.map(c => c.constructor.name).join(','));

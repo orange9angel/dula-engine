@@ -1,4 +1,5 @@
 import * as THREE from 'three';
+import { JointConstraintSystem } from '../constraints/JointConstraintSystem.js';
 
 export class SceneBase {
   constructor(name) {
@@ -7,6 +8,8 @@ export class SceneBase {
     this.scene.name = name;
     this.lights = [];
     this.characters = [];
+    // Per-character constraint systems (created lazily)
+    this._constraintSystems = new Map();
   }
 
   build() {
@@ -54,6 +57,18 @@ export class SceneBase {
       if (am && am._constraintSystem) {
         const others = this.characters.filter((other) => other !== c);
         am._constraintSystem.enforce(delta, others);
+      } else {
+        // Non-matrix characters also get collision guard + joint limits
+        let cs = this._constraintSystems.get(c);
+        if (!cs) {
+          cs = new JointConstraintSystem(c);
+          // Disable velocity smoothing for non-matrix path to avoid interfering
+          // with the existing animation blending in CharacterBase
+          cs.configure({ enableVelocitySmooth: false });
+          this._constraintSystems.set(c, cs);
+        }
+        const others = this.characters.filter((other) => other !== c);
+        cs.enforce(delta, others);
       }
     }
   }

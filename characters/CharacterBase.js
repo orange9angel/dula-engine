@@ -471,6 +471,7 @@ export class CharacterBase {
         this.mesh.rotation.z = 0;
       }
     }
+
   }
 
   getCurrentMouthShape(time) {
@@ -648,6 +649,10 @@ export class CharacterBase {
     const groundOffset = 0.12;
     this.mesh.position.set(x, y + groundOffset, z);
     this.baseY = y + groundOffset;
+    // 瞬间移动后同步矩阵动画基线，避免旧动画把角色拉回之前位置
+    if (this._actionMatrix) {
+      this._actionMatrix.teleportBaselineToCurrent();
+    }
   }
 
   lookAt(target) {

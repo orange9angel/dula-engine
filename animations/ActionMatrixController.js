@@ -108,6 +108,31 @@ export class ActionMatrixController {
     }
   }
 
+  /**
+   * 角色被瞬间移动（如 {Position:...} 或 setPosition）后调用。
+   * 更新矩阵基线到当前位置，并清除残留的 mesh 偏移，
+   * 避免旧矩阵动画把角色拉回之前的高度/位置。
+   */
+  teleportBaselineToCurrent() {
+    if (!this._baselinePose) return;
+    const c = this.character;
+    if (c.mesh) {
+      this._baselinePose.mesh = {
+        x: c.mesh.position.x,
+        y: c.mesh.position.y,
+        z: c.mesh.position.z,
+        rx: c.mesh.rotation.x,
+        ry: c.mesh.rotation.y,
+        rz: c.mesh.rotation.z,
+      };
+    }
+    // 清除残留的 mesh 偏移，防止旧动画与新位置冲突
+    if (this.currentPose) this.currentPose.mesh = null;
+    if (this._lastAppliedPose) this._lastAppliedPose.mesh = null;
+    if (this._transitionFrom) this._transitionFrom.mesh = null;
+    if (this._transitionTo) this._transitionTo.mesh = null;
+  }
+
   update(time, delta) {
     if (!this._baselinePose) {
       this.captureBaseline();
