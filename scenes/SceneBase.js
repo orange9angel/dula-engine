@@ -10,6 +10,26 @@ export class SceneBase {
     this.characters = [];
     // Per-character constraint systems (created lazily)
     this._constraintSystems = new Map();
+    // Collision proxies for camera clipping prevention
+    this.cameraObstacles = [];
+  }
+
+  /**
+   * Register a collision proxy to keep cameras from clipping into scene geometry.
+   *
+   * Supported obstacle types:
+   *   - { type: 'sphere',  center: THREE.Vector3, radius: number }
+   *   - { type: 'capsule', start: THREE.Vector3, end: THREE.Vector3, radius: number }
+   *   - { type: 'box',     center: THREE.Vector3, size: THREE.Vector3, rotation?: THREE.Quaternion }
+   */
+  registerCameraObstacle(obstacle) {
+    if (obstacle && obstacle.type) {
+      this.cameraObstacles.push(obstacle);
+    }
+  }
+
+  clearCameraObstacles() {
+    this.cameraObstacles = [];
   }
 
   build() {

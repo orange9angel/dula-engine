@@ -1,4 +1,5 @@
 export { CameraMoveBase } from './CameraMoveBase.js';
+export { CameraCollisionGuard } from './CameraCollisionGuard.js';
 export { CameraSmoothMove } from './CameraSmoothMove.js';
 export { FightEmotionCloseUp } from './FightEmotionCloseUp.js';
 export { FightBulletTimeTrack } from './FightBulletTimeTrack.js';

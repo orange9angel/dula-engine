@@ -22,6 +22,7 @@ export { SceneBase, SceneRegistry, registerScene } from './scenes/index.js';
 
 // Camera system
 export { CameraMoveBase, CameraMoveRegistry, registerCameraMove } from './camera/index.js';
+export { CameraCollisionGuard } from './camera/CameraCollisionGuard.js';
 
 // Voice system
 export { VoiceBase, VoiceRegistry, registerVoice } from './voices/index.js';
