@@ -11,6 +11,7 @@ import { PostProcessRegistry } from '../postprocessing/index.js';
 import { MusicDirector, MusicCue } from '../lib/MusicDirector.js';
 import { HitstopManager } from '../lib/HitstopManager.js';
 import { generateMouthCue } from '../lib/AudioMouthCue.js';
+import { faceAnimationForEmotion } from '../lib/FaceEmotionMap.js';
 
 
 const DEFAULT_TRANSITIONS = {
@@ -236,6 +237,11 @@ export class Storyboard {
         }
         if (item.endTime !== undefined && Math.abs(item.endTime - entry.endTime) > 0.01) {
           entry.endTime = item.endTime;
+        }
+        // Carry the TTS-inferred emotion onto the entry so the runtime can
+        // auto-play a matching facial expression.
+        if (item.emotion) {
+          entry.emotion = item.emotion;
         }
       }
       // Track the maximum audio end time for total duration calculation
@@ -500,6 +506,29 @@ export class Storyboard {
           }
         }
       }
+    }
+
+    // Auto-play facial expressions from TTS-inferred emotion when no explicit
+    // {Face...} tag was provided. This gives characters expression even on
+    // plain dialogue entries.
+    for (const entry of this.entries) {
+      if (!entry.character || !entry.dialogue) continue;
+      const char = this.characters.get(entry.character);
+      if (!char) continue;
+
+      const hasExplicitFace = (entry.animations || []).some(name =>
+        typeof name === 'string' && name.startsWith('Face')
+      );
+      if (hasExplicitFace) continue;
+
+      const faceAnimName = faceAnimationForEmotion(entry.emotion || entry.voiceEmotion);
+      if (!faceAnimName) continue;
+
+      const AnimClass = AnimationRegistry[faceAnimName];
+      if (!AnimClass) continue;
+
+      const entryDuration = entry.endTime - entry.startTime;
+      char.playAnimation(AnimClass, entry.startTime, entryDuration);
     }
 
     // Queue camera moves from SRT entries
@@ -1704,6 +1733,16 @@ export class Storyboard {
         }
         const progress = (t - cm.startTime) / (cm.endTime - cm.startTime);
         cm.instance.update(progress, this.camera, cameraContext);
+
+        // Eye contact: when a close-up/OTS camera is on a speaking character,
+        // make them look back at the camera / audience.
+        const targetName = cm.instance.characterName || cm.instance.target;
+        if (targetName) {
+          const char = this.characters.get(targetName);
+          if (char && char.isSpeaking) {
+            char.lookAtTarget(this.camera.position, t, t + 0.1);
+          }
+        }
       } else if (t > cm.endTime && cm.instance.started && !cm.instance.ended) {
         cm.instance.end(this.camera, cameraContext);
       }

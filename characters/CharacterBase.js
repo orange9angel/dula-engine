@@ -175,13 +175,16 @@ export class CharacterBase {
     console.warn(`[CharacterBase] ${this.name} does not support body animation "${name}"; skipped.`);
   }
 
-  updateEyeTracking(time) {
-    if (!this.eyeTracking.active || !this.headGroup) return;
-    if (time < this.eyeTracking.startTime || time > this.eyeTracking.endTime) {
-      if (!this.isSpeaking) {
-        this.headGroup.rotation.x = 0;
-        this.headGroup.rotation.y = 0;
-      }
+  updateEyeTracking(time, delta = 0.016) {
+    if (!this.headGroup) return;
+
+    // Smoothly return to neutral when tracking is off or outside its window.
+    if (!this.eyeTracking.active || time < this.eyeTracking.startTime || time > this.eyeTracking.endTime) {
+      const returnSpeed = 4 * delta;
+      this.headGroup.rotation.y += (0 - this.headGroup.rotation.y) * returnSpeed;
+      this.headGroup.rotation.x += (0 - this.headGroup.rotation.x) * returnSpeed;
+      if (Math.abs(this.headGroup.rotation.y) < 0.002) this.headGroup.rotation.y = 0;
+      if (Math.abs(this.headGroup.rotation.x) < 0.002) this.headGroup.rotation.x = 0;
       return;
     }
 
@@ -202,16 +205,28 @@ export class CharacterBase {
     while (yaw < -Math.PI) yaw += Math.PI * 2;
 
     // Clamp for natural neck limits
-    const maxYaw = 0.8;
-    const maxPitch = 0.5;
-    this.headGroup.rotation.y = Math.max(-maxYaw, Math.min(maxYaw, yaw));
-    this.headGroup.rotation.x = Math.max(-maxPitch, Math.min(maxPitch, pitch));
+    const maxYaw = 0.7;
+    const maxPitch = 0.4;
+    const targetYaw = Math.max(-maxYaw, Math.min(maxYaw, yaw));
+    const targetPitch = Math.max(-maxPitch, Math.min(maxPitch, pitch));
 
-    // Optional: subtle pupil shift for extra liveliness
+    // Smooth head turn (eyes lead, head follows)
+    const smooth = 6 * delta;
+    this.headGroup.rotation.y += (targetYaw - this.headGroup.rotation.y) * smooth;
+    this.headGroup.rotation.x += (targetPitch - this.headGroup.rotation.x) * smooth;
+
+    // Pupils shift more noticeably toward the target, independent of head rotation
     if (this.leftPupil && this.rightPupil) {
-      const pupilShift = Math.max(-0.02, Math.min(0.02, yaw * 0.03));
-      this.leftPupil.position.x = (this.leftPupil.userData.baseX || this.leftPupil.position.x) + pupilShift;
-      this.rightPupil.position.x = (this.rightPupil.userData.baseX || this.rightPupil.position.x) + pupilShift;
+      const baseLeftX = this.leftPupil.userData.baseX ?? this.leftPupil.position.x;
+      const baseRightX = this.rightPupil.userData.baseX ?? this.rightPupil.position.x;
+      const baseLeftY = this.leftPupil.userData.baseY ?? this.leftPupil.position.y;
+      const baseRightY = this.rightPupil.userData.baseY ?? this.rightPupil.position.y;
+      const pupilShiftX = Math.max(-0.045, Math.min(0.045, yaw * 0.06));
+      const pupilShiftY = Math.max(-0.025, Math.min(0.025, pitch * 0.05));
+      this.leftPupil.position.x = baseLeftX + pupilShiftX;
+      this.rightPupil.position.x = baseRightX + pupilShiftX;
+      this.leftPupil.position.y = baseLeftY + pupilShiftY;
+      this.rightPupil.position.y = baseRightY + pupilShiftY;
     }
   }
 
@@ -284,7 +299,7 @@ export class CharacterBase {
     this._updateBlink(delta);
 
     // Eye / head tracking
-    this.updateEyeTracking(time);
+    this.updateEyeTracking(time, delta);
 
     // ── Action Matrix System (v3) ──
     // 优先使用矩阵控制器处理矩阵动画
@@ -545,7 +560,7 @@ export class CharacterBase {
       this.mouth.rotation.x = baseRot + jawOpen;
 
       // Scale lower lip width and height (multiplicative for dramatic effect)
-      const lowerLip = this.mouth.children[0];
+      const lowerLip = this.lowerLip || this.mouth.children[0];
       if (lowerLip) {
         lowerLip.scale.x = lipWidth;
         lowerLip.scale.y = lipHeight;
@@ -557,8 +572,9 @@ export class CharacterBase {
         this.upperLip.scale.y = lipHeight * 0.85; // upper lip slightly thinner
       }
 
-      // Scale mouth cavity width and height
+      // Scale mouth cavity width and height, and show it only when open
       if (this.mouthCavity) {
+        this.mouthCavity.visible = jawOpen > 0.05;
         this.mouthCavity.scale.x = lipWidth * 0.9;
         const openFactor = 1.0 + jawOpen * 2.5;
         this.mouthCavity.scale.y = 0.6 * openFactor;
@@ -626,12 +642,22 @@ export class CharacterBase {
   _applyBlink(factor) {
     // factor: 0=open, 1=closed
     if (this.leftEyelid) {
-      this.leftEyelid.visible = true;
-      this.leftEyelid.scale.y = 1 - factor * 0.95;
+      // Hide the eyelid mesh completely when the eye is open so it doesn't add
+      // a permanent bump/line above the eye.
+      if (factor < 0.05) {
+        this.leftEyelid.visible = false;
+      } else {
+        this.leftEyelid.visible = true;
+        this.leftEyelid.scale.y = 1 - factor * 0.95;
+      }
     }
     if (this.rightEyelid) {
-      this.rightEyelid.visible = true;
-      this.rightEyelid.scale.y = 1 - factor * 0.95;
+      if (factor < 0.05) {
+        this.rightEyelid.visible = false;
+      } else {
+        this.rightEyelid.visible = true;
+        this.rightEyelid.scale.y = 1 - factor * 0.95;
+      }
     }
     // Subtle pupil shrink during blink
     if (this.leftPupil) {
