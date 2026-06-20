@@ -230,7 +230,7 @@ def resolve_voice_params(cfg, emotion=None):
     if emotion and emotion in cfg:
         variant = cfg[emotion].copy()
         # Inherit missing fields from default
-        for key in ("voice", "model", "rate", "pitch", "volume"):
+        for key in ("voice", "model", "rate", "pitch", "volume", "effect"):
             if key not in variant and key in base:
                 variant[key] = base[key]
         return variant
@@ -470,6 +470,40 @@ def get_mp3_duration(mp3_path):
         return float(result.stdout.strip())
     except ValueError:
         return None
+
+
+def apply_voice_effect(input_path, output_path, effect):
+    """Apply optional ffmpeg audio effect to a TTS clip.
+
+    effect dict may contain:
+      - rubberband: rubberband filter option string, e.g. "pitch=-2:formant=-2:tempo=1.0"
+      - af: arbitrary ffmpeg filter string (overrides rubberband if present)
+      - volume: output volume multiplier (applied after filter)
+    """
+    if not effect:
+        return input_path
+
+    af_parts = []
+    if effect.get("af"):
+        af_parts.append(effect["af"])
+    elif effect.get("rubberband"):
+        af_parts.append(f"rubberband={effect['rubberband']}")
+
+    if not af_parts:
+        return input_path
+
+    if effect.get("volume"):
+        af_parts.append(f"volume={effect['volume']}")
+
+    cmd = [
+        "ffmpeg", "-y", "-i", input_path,
+        "-af", ",".join(af_parts),
+        "-ar", "48000", "-ac", "1",
+        output_path,
+    ]
+    subprocess.run(cmd, check=True, capture_output=True)
+    print(f"  Applied effect: {','.join(af_parts)} -> {output_path}")
+    return output_path
 
 
 def generate_punch_hit_sfx(filepath, duration=0.15, sample_rate=48000):
@@ -1344,7 +1378,18 @@ async def generate(force_tts=False):
                 pitch=params.get("pitch", "+0Hz"),
                 volume=params.get("volume", "+0%"),
             )
-            await communicate.save(filepath)
+
+            effect = params.get("effect")
+            if effect:
+                raw_path = filepath.replace(".mp3", "_raw.mp3")
+                await communicate.save(raw_path)
+                apply_voice_effect(raw_path, filepath, effect)
+                try:
+                    os.remove(raw_path)
+                except OSError:
+                    pass
+            else:
+                await communicate.save(filepath)
             audio_duration = get_mp3_duration(filepath)
             print(f"Generated:{emotion_label} {filename} ({audio_duration:.2f}s)")
 

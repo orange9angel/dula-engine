@@ -1,4 +1,4 @@
-﻿import * as THREE from 'three';
+import * as THREE from 'three';
 import { Storyboard } from './storyboard/Storyboard.js';
 import { PostProcessRegistry } from './postprocessing/index.js';
 import * as VisemeMapper from './lib/VisemeMapper.js';
@@ -26,6 +26,7 @@ document.body.appendChild(renderer.domElement);
 const camera = new THREE.PerspectiveCamera(45, width / height, 0.1, 1000);
 camera.position.set(0, 3, 10);
 camera.lookAt(0, 1.5, 0);
+window.__dulaCamera = camera;
 
 // Load Story bootstrap (registers assets + custom plugins)
 try {
