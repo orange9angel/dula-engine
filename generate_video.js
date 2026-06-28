@@ -70,7 +70,7 @@ const server = http.createServer((req, res) => {
 
   // Serve episode content under /episode/
   if (reqPath.startsWith('/episode/')) {
-    const relPath = reqPath.slice('/episode/'.length);
+    const relPath = decodeURIComponent(reqPath.slice('/episode/'.length));
     const filePath = path.join(EPISODE_DIR, relPath);
     serveFile(filePath, res, req.url);
     return;
@@ -78,7 +78,7 @@ const server = http.createServer((req, res) => {
 
   // Serve node_modules from episode directory, story root, or project root
   if (reqPath.startsWith('/node_modules/')) {
-    const relPath = reqPath.slice('/node_modules/'.length);
+    const relPath = decodeURIComponent(reqPath.slice('/node_modules/'.length));
     // Try multiple locations: episode dir -> story root -> dula-story -> project root
     const candidates = [
       path.join(EPISODE_DIR, 'node_modules', relPath),
@@ -98,7 +98,7 @@ const server = http.createServer((req, res) => {
   }
 
   // Serve engine files from engine root
-  const filePath = path.join(__dirname, reqPath === '/' ? 'render.html' : reqPath);
+  const filePath = path.join(__dirname, reqPath === '/' ? 'render.html' : decodeURIComponent(reqPath));
   serveFile(filePath, res);
 });
 
@@ -113,6 +113,8 @@ function serveFile(filePath, res, urlPath = null) {
     '.webm': 'video/webm',
     '.png': 'image/png',
     '.wav': 'audio/wav',
+    '.glb': 'model/gltf-binary',
+    '.gltf': 'model/gltf+json',
   };
   const contentType = mimeTypes[ext] || 'application/octet-stream';
 

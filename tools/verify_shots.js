@@ -23,7 +23,7 @@ const server = http.createServer((req, res) => {
 
   // Serve episode content under /episode/
   if (reqPath.startsWith('/episode/')) {
-    const relPath = reqPath.slice('/episode/'.length);
+    const relPath = decodeURIComponent(reqPath.slice('/episode/'.length));
     const filePath = path.join(EPISODE_DIR, relPath);
     serveFile(filePath, res, reqPath);
     return;
@@ -31,7 +31,7 @@ const server = http.createServer((req, res) => {
 
   // Serve node_modules from episode directory or story root
   if (reqPath.startsWith('/node_modules/')) {
-    const relPath = reqPath.slice('/node_modules/'.length);
+    const relPath = decodeURIComponent(reqPath.slice('/node_modules/'.length));
     let filePath = path.join(EPISODE_DIR, 'node_modules', relPath);
     if (!fs.existsSync(filePath)) {
       filePath = path.join(process.cwd(), 'node_modules', relPath);
@@ -41,7 +41,7 @@ const server = http.createServer((req, res) => {
   }
 
   // Serve engine files from engine root
-  const filePath = path.join(ROOT, reqPath === '/' ? 'render.html' : reqPath);
+  const filePath = path.join(ROOT, reqPath === '/' ? 'render.html' : decodeURIComponent(reqPath));
   serveFile(filePath, res, reqPath);
 });
 
@@ -57,6 +57,8 @@ function serveFile(filePath, res, reqPath) {
     '.jpg': 'image/jpeg',
     '.jpeg': 'image/jpeg',
     '.wav': 'audio/wav',
+    '.glb': 'model/gltf-binary',
+    '.gltf': 'model/gltf+json',
   };
   const contentType = mimeTypes[ext] || 'application/octet-stream';
 
@@ -132,13 +134,13 @@ server.listen(PORT, async () => {
     if (!m) continue;
     const start = parseInt(m[1]) * 3600 + parseInt(m[2]) * 60 + parseInt(m[3]) + parseInt(m[4]) / 1000;
     const end = parseInt(m[5]) * 3600 + parseInt(m[6]) * 60 + parseInt(m[7]) + parseInt(m[8]) / 1000;
-    const mid = (start + end) / 2;
-    times.push({ start, end, mid });
+    const sample = start + (end - start) * 0.9;
+    times.push({ start, end, sample });
     while (i < lines.length && lines[i].trim() !== '') i++;
   }
 
   for (let idx = 0; idx < times.length; idx++) {
-    const t = times[idx].mid;
+    const t = times[idx].sample;
     const dataUrl = await page.evaluate(async (time) => {
       return await window.captureAtTime(time);
     }, t);

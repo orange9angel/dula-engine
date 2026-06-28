@@ -132,9 +132,11 @@ export const HUMANOID_STANDARD = {
   },
 
   // === 躯干根节点 ===
+  // mesh.ry 是角色在世界中的水平朝向（转身），应允许完整 360° 旋转，
+  // 而不是用躯干扭转限制来约束面朝方向。
   mesh: {
     rx: [-Math.PI / 6, Math.PI / 6],
-    ry: [-Math.PI / 3, Math.PI / 3],
+    ry: [-Math.PI, Math.PI],
     rz: [-Math.PI / 6, Math.PI / 6],
   },
 };
@@ -230,7 +232,7 @@ export const HUMANOID_ATHLETIC = {
   },
   mesh: {
     rx: [-Math.PI / 4, Math.PI / 4],
-    ry: [-Math.PI / 2, Math.PI / 2],
+    ry: [-Math.PI, Math.PI],
     rz: [-Math.PI / 4, Math.PI / 4],
   },
 };
@@ -327,7 +329,7 @@ export const ALIEN_FLEXIBLE = {
   },
   mesh: {
     rx: [-Math.PI / 3, Math.PI / 3],
-    ry: [-Math.PI / 2, Math.PI / 2],
+    ry: [-Math.PI, Math.PI],
     rz: [-Math.PI / 3, Math.PI / 3],
   },
 };

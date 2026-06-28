@@ -377,7 +377,7 @@ export class Storyboard {
     for (const name of mentionedChars) {
       const CharClass = CharacterRegistry[name];
       if (CharClass) {
-        const instance = new CharClass();
+        const instance = new CharClass(name);
         this.characters.set(name, instance);
       }
     }
@@ -411,17 +411,22 @@ export class Storyboard {
         const dx = 0 - char.mesh.position.x;
         const dz = 0 - char.mesh.position.z;
         char.mesh.rotation.y = Math.atan2(dx, dz);
+        char._faceTargetName = null;
       } else if (p.face === 'forward') {
         char.mesh.lookAt(char.mesh.position.x, char.mesh.position.y, char.mesh.position.z + 5);
+        char._faceTargetName = null;
       } else if (p.face === 'right') {
         // Face +X direction
         char.mesh.rotation.y = Math.PI / 2;
+        char._faceTargetName = null;
       } else if (p.face === 'left') {
         // Face -X direction
         char.mesh.rotation.y = -Math.PI / 2;
+        char._faceTargetName = null;
       } else if (p.face === 'back') {
         // Face -Z direction
         char.mesh.rotation.y = Math.PI;
+        char._faceTargetName = null;
       } else {
         const targetChar = this.characters.get(p.face);
         if (targetChar) {
@@ -429,10 +434,12 @@ export class Storyboard {
           const dx = targetChar.mesh.position.x - char.mesh.position.x;
           const dz = targetChar.mesh.position.z - char.mesh.position.z;
           char.mesh.rotation.y = Math.atan2(dx, dz);
+          char._faceTargetName = p.face;
         } else {
           const dx = 0 - char.mesh.position.x;
           const dz = 0 - char.mesh.position.z;
           char.mesh.rotation.y = Math.atan2(dx, dz);
+          char._faceTargetName = null;
         }
       }
     }
@@ -1097,6 +1104,75 @@ export class Storyboard {
     }
   }
 
+  _inferDialoguePartnerName(entry, char) {
+    const speakerName = entry?.character || char?.name;
+    if (!speakerName) return null;
+
+    const cameraMove = entry?.cameraMove;
+    if (cameraMove?.name === 'OverShoulder') {
+      const opts = cameraMove.options || {};
+      const subject = opts.subject ?? opts.target;
+      const over = opts.over ?? opts.shooter;
+      if (subject === speakerName && over && over !== speakerName) return over;
+      if (over === speakerName && subject && subject !== speakerName) return subject;
+      if (subject && subject !== speakerName) return subject;
+      if (over && over !== speakerName) return over;
+    }
+
+    if (cameraMove?.name === 'TwoShot') {
+      const opts = cameraMove.options || {};
+      const a = opts.characterA ?? opts.left;
+      const b = opts.characterB ?? opts.right;
+      if (a === speakerName && b) return b;
+      if (b === speakerName && a) return a;
+    }
+
+    if (char?._faceTargetName && char._faceTargetName !== speakerName) {
+      return char._faceTargetName;
+    }
+
+    const latestPlacement = this._latestPlacementForCharacter(speakerName, entry?.startTime);
+    if (latestPlacement?.face && this._isCharacterFaceTarget(latestPlacement.face, speakerName)) {
+      return latestPlacement.face;
+    }
+
+    return null;
+  }
+
+  _latestPlacementForCharacter(characterName, time = Infinity) {
+    if (!this.storyPlacements || !this.currentSceneName) return null;
+    let latest = null;
+    for (const placement of this.storyPlacements) {
+      if (placement.scene !== this.currentSceneName) continue;
+      if (placement.character !== characterName) continue;
+      if (placement.startTime !== undefined && placement.startTime > time) continue;
+      if (!latest || (placement.startTime ?? 0) >= (latest.startTime ?? 0)) {
+        latest = placement;
+      }
+    }
+    return latest;
+  }
+
+  _isCharacterFaceTarget(face, speakerName) {
+    if (!face || face === speakerName) return false;
+    return !['center', 'forward', 'camera', 'back', 'left', 'right'].includes(face);
+  }
+
+  _turnCharacterToward(char, targetChar, blend = 1, targetName = null) {
+    if (!char?.mesh || !targetChar?.mesh) return;
+    const dx = targetChar.mesh.position.x - char.mesh.position.x;
+    const dz = targetChar.mesh.position.z - char.mesh.position.z;
+    if ((dx * dx + dz * dz) < 0.0001) return;
+
+    const desired = Math.atan2(dx, dz);
+    const current = char.mesh.rotation.y;
+    let delta = desired - current;
+    while (delta > Math.PI) delta -= Math.PI * 2;
+    while (delta < -Math.PI) delta += Math.PI * 2;
+    char.mesh.rotation.y = current + delta * Math.max(0, Math.min(1, blend));
+    if (targetName) char._faceTargetName = targetName;
+  }
+
   arrangeCharacters() {
     const chars = Array.from(this.characters.values());
     // Only consider placements for the current scene that have already started
@@ -1200,24 +1276,31 @@ export class Storyboard {
         const dx = 0 - char.mesh.position.x;
         const dz = 0 - char.mesh.position.z;
         char.mesh.rotation.y = Math.atan2(dx, dz);
+        char._faceTargetName = null;
       } else if (p.face === 'forward' || p.face === 'camera') {
         char.mesh.lookAt(char.mesh.position.x, char.mesh.position.y, char.mesh.position.z + 5);
+        char._faceTargetName = null;
       } else if (p.face === 'back') {
         char.mesh.rotation.y = Math.PI;
+        char._faceTargetName = null;
       } else if (p.face === 'left') {
         char.mesh.rotation.y = -Math.PI / 2;
+        char._faceTargetName = null;
       } else if (p.face === 'right') {
         char.mesh.rotation.y = Math.PI / 2;
+        char._faceTargetName = null;
       } else {
         const targetChar = this.characters.get(p.face);
         if (targetChar) {
           const dx = targetChar.mesh.position.x - char.mesh.position.x;
           const dz = targetChar.mesh.position.z - char.mesh.position.z;
           char.mesh.rotation.y = Math.atan2(dx, dz);
+          char._faceTargetName = p.face;
         } else {
           const dx = 0 - char.mesh.position.x;
           const dz = 0 - char.mesh.position.z;
           char.mesh.rotation.y = Math.atan2(dx, dz);
+          char._faceTargetName = null;
         }
       }
     }
@@ -1394,6 +1477,30 @@ export class Storyboard {
           if (!char.isSpeaking || char._activeSpeakKey !== speakKey) {
             char.speak(entry.startTime, speakDuration, dialogueText, mouthCue);
             char._activeSpeakKey = speakKey;
+          }
+
+          // Eye contact: infer the conversation partner from the active camera first,
+          // then fall back to the latest face= placement. This keeps dialogue aimed at
+          // the listener instead of letting everyone drift into front-facing lineup poses.
+          const partnerName = this._inferDialoguePartnerName(entry, char);
+          if (partnerName && partnerName !== entry.character) {
+            const partner = this.characters.get(partnerName);
+            if (partner && partner.headGroup && char.headGroup) {
+              this._turnCharacterToward(char, partner, 0.85, partnerName);
+              if (!partner.isSpeaking) {
+                this._turnCharacterToward(partner, char, 0.55, entry.character);
+              }
+
+              const partnerHead = new THREE.Vector3();
+              partner.headGroup.getWorldPosition(partnerHead);
+              const speakerHead = new THREE.Vector3();
+              char.headGroup.getWorldPosition(speakerHead);
+              const lookUntil = speechEndTime + 0.3;
+              char.lookAtTarget(partnerHead, t, lookUntil);
+              if (!partner.isSpeaking) {
+                partner.lookAtTarget(speakerHead, t, lookUntil);
+              }
+            }
           }
         }
       }
@@ -1641,13 +1748,16 @@ export class Storyboard {
                     const dx = targetChar.mesh.position.x - char.mesh.position.x;
                     const dz = targetChar.mesh.position.z - char.mesh.position.z;
                     char.mesh.rotation.y = Math.atan2(dx, dz);
+                    char._faceTargetName = target;
                   } else if (target === 'center') {
                     const dx = -char.mesh.position.x;
                     const dz = -char.mesh.position.z;
                     char.mesh.rotation.y = Math.atan2(dx, dz);
+                    char._faceTargetName = null;
                   } else if (['forward', 'back', 'left', 'right'].includes(target)) {
                     const dirMap = { forward: 0, back: Math.PI, left: -Math.PI / 2, right: Math.PI / 2 };
                     char.mesh.rotation.y = dirMap[target];
+                    char._faceTargetName = null;
                   }
                 }
               }
@@ -1734,15 +1844,16 @@ export class Storyboard {
         const progress = (t - cm.startTime) / (cm.endTime - cm.startTime);
         cm.instance.update(progress, this.camera, cameraContext);
 
-        // Eye contact: when a close-up/OTS camera is on a speaking character,
-        // make them look back at the camera / audience.
-        const targetName = cm.instance.characterName || cm.instance.target;
-        if (targetName) {
-          const char = this.characters.get(targetName);
-          if (char && char.isSpeaking) {
-            char.lookAtTarget(this.camera.position, t, t + 0.1);
-          }
-        }
+        // Eye contact is now driven by the dialogue loop: speakers look at the
+        // character they are facing, and listeners look back. We no longer force
+        // characters to stare into the camera, which broke the sense of conversation.
+        // const targetName = cm.instance.characterName || cm.instance.target;
+        // if (targetName) {
+        //   const char = this.characters.get(targetName);
+        //   if (char && char.isSpeaking) {
+        //     char.lookAtTarget(this.camera.position, t, t + 0.1);
+        //   }
+        // }
       } else if (t > cm.endTime && cm.instance.started && !cm.instance.ended) {
         cm.instance.end(this.camera, cameraContext);
       }

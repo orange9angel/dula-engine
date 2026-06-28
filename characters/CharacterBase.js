@@ -178,6 +178,21 @@ export class CharacterBase {
   updateEyeTracking(time, delta = 0.016) {
     if (!this.headGroup) return;
 
+    // Back-face culling: hide the eye groups when the head is turned away from the camera.
+    // This stops eyeballs from reading as floating dots when viewed from the side/back.
+    const cam = (typeof window !== 'undefined' && window.__dulaCamera) ? window.__dulaCamera : null;
+    if (cam) {
+      const headPos = new THREE.Vector3();
+      this.headGroup.getWorldPosition(headPos);
+      const toCam = new THREE.Vector3().subVectors(cam.position, headPos).normalize();
+      const headForward = new THREE.Vector3(0, 0, 1).applyQuaternion(this.headGroup.getWorldQuaternion(new THREE.Quaternion())).normalize();
+      // Keep eyes visible for side profiles too, so close-ups from off-angles
+      // still show facial features. Only hide when the head is nearly fully back.
+      const facingCamera = toCam.dot(headForward) > -0.92;
+      if (this.leftEyeGroup) this.leftEyeGroup.visible = facingCamera;
+      if (this.rightEyeGroup) this.rightEyeGroup.visible = facingCamera;
+    }
+
     // Smoothly return to neutral when tracking is off or outside its window.
     if (!this.eyeTracking.active || time < this.eyeTracking.startTime || time > this.eyeTracking.endTime) {
       const returnSpeed = 4 * delta;
@@ -215,14 +230,18 @@ export class CharacterBase {
     this.headGroup.rotation.y += (targetYaw - this.headGroup.rotation.y) * smooth;
     this.headGroup.rotation.x += (targetPitch - this.headGroup.rotation.x) * smooth;
 
-    // Pupils shift more noticeably toward the target, independent of head rotation
+    // Pupils shift toward the target, but stay safely inside the sclera.
+    // Scale the offset by the character's eye radius so it never overshoot.
     if (this.leftPupil && this.rightPupil) {
       const baseLeftX = this.leftPupil.userData.baseX ?? this.leftPupil.position.x;
       const baseRightX = this.rightPupil.userData.baseX ?? this.rightPupil.position.x;
       const baseLeftY = this.leftPupil.userData.baseY ?? this.leftPupil.position.y;
       const baseRightY = this.rightPupil.userData.baseY ?? this.rightPupil.position.y;
-      const pupilShiftX = Math.max(-0.045, Math.min(0.045, yaw * 0.06));
-      const pupilShiftY = Math.max(-0.025, Math.min(0.025, pitch * 0.05));
+      const eyeRadius = this.leftPupil.userData.eyeRadius || this.eyeRadius || 0.04;
+      const maxShiftX = eyeRadius * 0.25;
+      const maxShiftY = eyeRadius * 0.18;
+      const pupilShiftX = Math.max(-maxShiftX, Math.min(maxShiftX, yaw * 0.06));
+      const pupilShiftY = Math.max(-maxShiftY, Math.min(maxShiftY, pitch * 0.05));
       this.leftPupil.position.x = baseLeftX + pupilShiftX;
       this.rightPupil.position.x = baseRightX + pupilShiftX;
       this.leftPupil.position.y = baseLeftY + pupilShiftY;
@@ -300,6 +319,10 @@ export class CharacterBase {
 
     // Eye / head tracking
     this.updateEyeTracking(time, delta);
+
+    // Subtle "alive" head sway when a character is engaged in eye contact.
+    // This breaks the puppet-like frozen stare while keeping the gaze on target.
+    this._applyConversationMicroMotion(time, delta);
 
     // ── Action Matrix System (v3) ──
     // 优先使用矩阵控制器处理矩阵动画
@@ -486,7 +509,6 @@ export class CharacterBase {
         this.mesh.rotation.z = 0;
       }
     }
-
   }
 
   getCurrentMouthShape(time) {
@@ -842,6 +864,33 @@ export class CharacterBase {
     }
     if (this.headGroup) {
       this.headGroup.rotation.set(0, 0, 0);
+    }
+  }
+
+  /**
+   * Add tiny non-repetitive head sways and pupil micro-movements when a character
+   * is actively looking at a conversation partner. This prevents the uncanny
+   * frozen stare that makes characters read as puppets.
+   */
+  _applyConversationMicroMotion(time, delta) {
+    if (!this.headGroup || !this.eyeTracking.active) return;
+    if (time < this.eyeTracking.startTime || time > this.eyeTracking.endTime) return;
+
+    const speakingAmp = this.isSpeaking ? 1.4 : 1.0;
+    const speed = this.isSpeaking ? 7.0 : 4.5;
+    const nameHash = (this.name || '').length;
+    const headYaw = Math.sin(time * speed * 0.7 + nameHash) * 0.012 * speakingAmp;
+    const headPitch = Math.sin(time * speed * 0.9 + 1.3) * 0.009 * speakingAmp;
+    this.headGroup.rotation.y += headYaw;
+    this.headGroup.rotation.x += headPitch;
+
+    if (this.leftPupil && this.rightPupil) {
+      const saccadeX = Math.sin(time * 11.0 + 2.1) * 0.0015;
+      const saccadeY = Math.cos(time * 13.0 + 0.7) * 0.001;
+      this.leftPupil.position.x += saccadeX;
+      this.leftPupil.position.y += saccadeY;
+      this.rightPupil.position.x += saccadeX;
+      this.rightPupil.position.y += saccadeY;
     }
   }
 

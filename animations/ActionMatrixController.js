@@ -461,23 +461,46 @@ export class ActionMatrixController {
     const base = this._baselinePose;
     if (!base) return;
 
-    const returnSpeed = 2 * 0.016;  // 更慢的过渡，保持动画结束姿势更久
+    // Slower return to idle so the end of a gesture doesn't snap to zero instantly.
+    const returnSpeed = 0.5 * delta;
     const idlePose = PoseMatrix.lerp(this._lastAppliedPose, PoseMatrix.zero(), returnSpeed);
 
-    // Idle pose transition (silent)
-
-    // Static idle — no breathing, no head sway
-    // Character holds last pose perfectly still
-    // Preserve mesh Y offset (don't force to 0, let it return to base naturally)
     if (idlePose.mesh) {
       idlePose.mesh = { ...idlePose.mesh };
     } else {
       idlePose.mesh = {};
     }
-    idlePose.headGroup = { rx: 0, ry: 0, rz: 0 };
-    // Idle arm pose: elbow zero keeps the forearm aligned with the upper arm.
-    idlePose.rightElbow = { rx: 0, ry: 0, rz: 0 };
-    idlePose.leftElbow = { rx: 0, ry: 0, rz: 0 };
+
+    // Subtle "alive" idle motion: breathing, weight shift, micro gestures.
+    // Keep amplitudes small so it reads as natural fidgeting, not dancing.
+    const t = time * 1.6;
+    idlePose.headGroup = {
+      rx: Math.sin(t * 0.5) * 0.012,
+      ry: Math.sin(t * 0.35) * 0.018,
+      rz: Math.sin(t * 0.28) * 0.008,
+    };
+    idlePose.rightClavicle = { rz: Math.sin(t * 0.6 + 0.3) * 0.015 };
+    idlePose.leftClavicle = { rz: -Math.sin(t * 0.6 + 0.3) * 0.015 };
+    // Keep arms slightly away from the torso in idle so they don't sink into the body.
+    const isMonkey = this.character.archetypes && this.character.archetypes.includes('monkey');
+    if (isMonkey) {
+      // Monkey arms hang forward; a small forward/outward rotation keeps them off the belly.
+      idlePose.rightShoulder = { rx: -0.22 + Math.sin(t * 0.6 + 0.3) * 0.04, ry: 0.12 };
+      idlePose.leftShoulder = { rx: -0.22 + Math.sin(t * 0.6 + 0.3) * 0.04, ry: -0.12 };
+    } else {
+      idlePose.rightShoulder = { rz: -0.12 + Math.sin(t * 0.6 + 0.3) * 0.02 };
+      idlePose.leftShoulder = { rz: 0.12 - Math.sin(t * 0.6 + 0.3) * 0.02 };
+    }
+    // Keep a slight natural bend in the elbows instead of forcing them straight.
+    idlePose.rightElbow = { rx: -0.08 + Math.sin(t * 0.7 + 1.0) * 0.04, ry: 0, rz: 0 };
+    idlePose.leftElbow = { rx: -0.08 + Math.sin(t * 0.7 + 2.5) * 0.04, ry: 0, rz: 0 };
+    idlePose.rightWrist = { ry: Math.sin(t * 0.9 + 0.5) * 0.04, rz: Math.sin(t * 0.65 + 0.2) * 0.03 };
+    idlePose.leftWrist = { ry: -Math.sin(t * 0.9 + 0.5) * 0.04, rz: -Math.sin(t * 0.65 + 0.2) * 0.03 };
+    idlePose.rightHip = { rx: Math.sin(t * 0.55 + 0.4) * 0.02 };
+    idlePose.leftHip = { rx: Math.sin(t * 0.55 + 0.4 + Math.PI) * 0.02 };
+    idlePose.rightKnee = { rx: Math.abs(Math.sin(t * 0.55 + 0.4)) * 0.025 };
+    idlePose.leftKnee = { rx: Math.abs(Math.sin(t * 0.55 + 0.4 + Math.PI)) * 0.025 };
+
     // Reset facial features to base state (prevent mouth/eyebrow drift)
     idlePose.mouth = { sx: 0, sy: 0, sz: 0, px: 0, py: 0, pz: 0, rx: 0, ry: 0, rz: 0 };
     idlePose.eyebrows = {

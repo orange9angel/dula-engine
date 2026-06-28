@@ -22,6 +22,7 @@ try {
 }
 
 const storyboard = new Storyboard(renderer, camera);
+window.storyboard = storyboard;
 
 // Patch fetch so assets/audio paths resolve correctly from /tools/ base URL
 const originalFetch = window.fetch;
@@ -36,11 +37,20 @@ window.loadStoryboard = async () => {
   await storyboard.load('/episode/script.story', '/episode/assets/audio/manifest.json');
 };
 
+let lastCaptureTime = 0;
+
 window.captureAtTime = async (time) => {
-  // Pre-warm: seek to just before time to initialize moves/animations state
-  const PREWARM_TIME = Math.max(0, time - 0.5);
-  storyboard.update(PREWARM_TIME);
+  // Sequential seek from the previous captured time so that short camera moves
+  // (which only start when the current time falls inside their [startTime,
+  // endTime] window) get a chance to initialize and leave the camera in the
+  // correct final position.
+  const STEP = 0.1;
+  const start = Math.min(lastCaptureTime, time);
+  for (let t = start; t < time; t += STEP) {
+    storyboard.update(Math.min(t, time));
+  }
   storyboard.update(time);
   storyboard.render();
+  lastCaptureTime = time;
   return renderer.domElement.toDataURL('image/jpeg', 0.92);
 };
