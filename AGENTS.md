@@ -314,6 +314,8 @@ node tools/verify_shots.js <episode-dir>
 | TTS 朗读标签 | ✅ 已修复 | `generate_audio.py` 漏过滤 `{Ball:...}`/`{Prop:...}`/`{Position:...}`/`{Event:...}`，导致 TTS 读出英文参数。v0.1.6 已修复。 |
 | BGM 素材缺失 | ✅ 已修复 | `generate_bgm.py` 支持 procedural ADSR 合成回退，无需手动素材即可出片。 |
 | SFX 自动调度 | ✅ 已落地 | `generate_audio.py` 从 story events 自动提取并调度 SFX。 |
+| 多 TTS 引擎 | ✅ 已落地 | 支持 edge-tts（默认）/ ElevenLabs / DashScope CosyVoice，通过 `--provider` 切换。 |
+| MusicDirector 配乐调度 | ✅ 已落地 | 支持 Cue / Duck / HitPoint / Stem / Crossfade，实现 BGM 随剧情变化。 |
 | 对话自然度 | ⚠️ 可优化 | 「必中球拍」梗的对话仍不够自然（属于内容层问题）。 |
 | 球拍可见性 | ⚠️ 可优化 | 哆啦A梦身体较圆，球拍有时被遮挡。 |
 | 相机距离过近 | ⚠️ 可优化 | `CloseUp`/`TrackingCloseUp` 在某些机位距离过近（如 shot 02、07）。 |
@@ -430,4 +432,4 @@ const swingTime = cd.computeSwingTime(flight, startTime, 0.6);
 
 ---
 
-**最后更新**：2026-04-19
+**最后更新**：2026-07-01
