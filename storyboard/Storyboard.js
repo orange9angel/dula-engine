@@ -415,6 +415,13 @@ export class Storyboard {
       } else if (p.face === 'forward') {
         char.mesh.lookAt(char.mesh.position.x, char.mesh.position.y, char.mesh.position.z + 5);
         char._faceTargetName = null;
+      } else if (p.face === 'camera') {
+        if (this.camera) {
+          char.mesh.lookAt(this.camera.position.x, char.mesh.position.y, this.camera.position.z);
+        } else {
+          char.mesh.lookAt(char.mesh.position.x, char.mesh.position.y, char.mesh.position.z + 5);
+        }
+        char._faceTargetName = null;
       } else if (p.face === 'right') {
         // Face +X direction
         char.mesh.rotation.y = Math.PI / 2;
@@ -853,8 +860,12 @@ export class Storyboard {
       } else if (p.face === 'forward') {
         char.mesh.lookAt(char.mesh.position.x, char.mesh.position.y, char.mesh.position.z + 5);
       } else if (p.face === 'camera') {
-        // Face toward the camera (positive Z direction)
-        char.mesh.lookAt(char.mesh.position.x, char.mesh.position.y, char.mesh.position.z + 5);
+        // Face toward the current camera position
+        if (this.camera) {
+          char.mesh.lookAt(this.camera.position.x, char.mesh.position.y, this.camera.position.z);
+        } else {
+          char.mesh.lookAt(char.mesh.position.x, char.mesh.position.y, char.mesh.position.z + 5);
+        }
       } else {
         const targetChar = this.characters.get(p.face);
         if (targetChar) {
@@ -1277,8 +1288,17 @@ export class Storyboard {
         const dz = 0 - char.mesh.position.z;
         char.mesh.rotation.y = Math.atan2(dx, dz);
         char._faceTargetName = null;
-      } else if (p.face === 'forward' || p.face === 'camera') {
+      } else if (p.face === 'forward') {
         char.mesh.lookAt(char.mesh.position.x, char.mesh.position.y, char.mesh.position.z + 5);
+        char._faceTargetName = null;
+      } else if (p.face === 'camera') {
+        if (this.camera) {
+          // Use lookAt so the character's actual forward axis (typically -Z)
+          // points toward the camera, while keeping the body upright.
+          char.mesh.lookAt(this.camera.position.x, char.mesh.position.y, this.camera.position.z);
+        } else {
+          char.mesh.lookAt(char.mesh.position.x, char.mesh.position.y, char.mesh.position.z + 5);
+        }
         char._faceTargetName = null;
       } else if (p.face === 'back') {
         char.mesh.rotation.y = Math.PI;
@@ -1380,6 +1400,26 @@ export class Storyboard {
     }
     if (targetScene && targetScene !== this.currentSceneName) {
       this.switchScene(targetScene, true, t);
+    }
+
+    // Camera moves: update before story placements so that face=camera
+    // can use the current camera position when applying character facing.
+    const cameraContext = {
+      renderer: this.renderer,
+      scene: this.currentScene?.scene,
+      characters: this.characters,
+      currentScene: this.currentScene,
+    };
+    for (const cm of this.cameraMoves) {
+      if (t >= cm.startTime && t <= cm.endTime) {
+        if (!cm.instance.started) {
+          cm.instance.start(this.camera, cameraContext);
+        }
+        const progress = (t - cm.startTime) / (cm.endTime - cm.startTime);
+        cm.instance.update(progress, this.camera, cameraContext);
+      } else if (t > cm.endTime && cm.instance.started && !cm.instance.ended) {
+        cm.instance.end(this.camera, cameraContext);
+      }
     }
 
     // Apply per-entry {Position:...} placements at their scheduled times.
@@ -1826,37 +1866,6 @@ export class Storyboard {
       const offset = this.hitstopManager.getShakeOffset(t);
       this.camera.position.x += offset.x;
       this.camera.position.y += offset.y;
-    }
-
-    // Camera moves
-    const cameraContext = {
-      renderer: this.renderer,
-      scene: this.currentScene?.scene,
-      characters: this.characters,
-      currentScene: this.currentScene,
-    };
-
-    for (const cm of this.cameraMoves) {
-      if (t >= cm.startTime && t <= cm.endTime) {
-        if (!cm.instance.started) {
-          cm.instance.start(this.camera, cameraContext);
-        }
-        const progress = (t - cm.startTime) / (cm.endTime - cm.startTime);
-        cm.instance.update(progress, this.camera, cameraContext);
-
-        // Eye contact is now driven by the dialogue loop: speakers look at the
-        // character they are facing, and listeners look back. We no longer force
-        // characters to stare into the camera, which broke the sense of conversation.
-        // const targetName = cm.instance.characterName || cm.instance.target;
-        // if (targetName) {
-        //   const char = this.characters.get(targetName);
-        //   if (char && char.isSpeaking) {
-        //     char.lookAtTarget(this.camera.position, t, t + 0.1);
-        //   }
-        // }
-      } else if (t > cm.endTime && cm.instance.started && !cm.instance.ended) {
-        cm.instance.end(this.camera, cameraContext);
-      }
     }
   }
 

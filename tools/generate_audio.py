@@ -1402,6 +1402,7 @@ async def generate(force_tts=False):
                 "dialogue": dialogue,
                 "file": filename,
                 "audioDuration": audio_duration,
+                "emotion": emotion or None,
             }
         )
 

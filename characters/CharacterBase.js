@@ -132,9 +132,15 @@ export class CharacterBase {
     this.mouthCue = null;
     if (this.mouth) {
       this.mouth.scale.set(this.mouthBaseScaleX, this.mouthBaseScaleY, this.mouthBaseScaleZ);
+      if (this.mouthBaseY !== undefined) {
+        this.mouth.position.y = this.mouthBaseY;
+      }
     }
     if (this.headGroup && !this.eyeTracking.active) {
       this.headGroup.rotation.set(0, 0, 0);
+      if (this.headBaseY !== undefined) {
+        this.headGroup.position.y = this.headBaseY;
+      }
     }
   }
 
@@ -602,19 +608,32 @@ export class CharacterBase {
         this.mouthCavity.scale.y = 0.6 * openFactor;
       }
     } else {
-      // Default fallback
-      const scaleY = 1.0 + shape.lipHeight * 0.8;
-      const scaleX = shape.lipWidth;
+      // Default fallback — 更夸张的盒型嘴型，远距离也能看清
+      if (this.mouthBaseY === undefined && this.mouth.position) {
+        this.mouthBaseY = this.mouth.position.y;
+      }
+      const openFactor = shape.lipHeight; // 0..1
+      const scaleY = 0.35 + openFactor * 2.0; // 闭合 0.35，张大 2.35
+      const scaleX = 0.6 + shape.lipWidth * 0.7; // 更明显的宽窄变化
       this.mouth.scale.y = this.mouthBaseScaleY * scaleY * tensionScale;
       this.mouth.scale.x = this.mouthBaseScaleX * scaleX;
       this.mouth.scale.z = this.mouthBaseScaleZ;
+      // 嘴张开时轻微下移，模拟下巴下落
+      if (this.mouthBaseY !== undefined) {
+        this.mouth.position.y = this.mouthBaseY - openFactor * 0.04;
+      }
     }
   }
 
   animateBody(time, delta) {
     if (!this.headGroup) return;
-    // Disabled — no head movement during speaking for clean motion demo
-    // this.headGroup.rotation.x = Math.sin(time * 6) * 0.025;
+    // 说话时给头部一个轻微节奏性点头/摆动，帮助观众定位说话者
+    if (this.isSpeaking && time >= this.speakStartTime && time <= this.speakEndTime) {
+      if (this.headBaseY === undefined) this.headBaseY = this.headGroup.position.y;
+      const talkPhase = (time - this.speakStartTime) * 8;
+      this.headGroup.rotation.x = Math.sin(talkPhase) * 0.035;
+      this.headGroup.position.y = this.headBaseY + Math.abs(Math.sin(talkPhase * 0.5)) * 0.015;
+    }
   }
 
   /**
