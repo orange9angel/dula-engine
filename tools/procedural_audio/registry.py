@@ -38,6 +38,20 @@ REGISTRY = {
         "description": "重型电磁轨道炮：尖锐机械爆裂 + 次低音尾震",
         "generator": generators.railgun,
     },
+    "cannon_fire": {
+        "category": "combat",
+        "params": ["duration", "volume"],
+        "defaults": {},
+        "description": "重型实弹火炮：机械击发 + 炮膛冲击 + 中频爆裂 + 金属尾音",
+        "generator": generators.cannon_fire,
+    },
+    "bullet_impact": {
+        "category": "combat",
+        "params": ["duration", "volume"],
+        "defaults": {},
+        "description": "子弹命中金属/路面：高频火花噼啪 + 低频凹陷声",
+        "generator": generators.bullet_impact,
+    },
     "explosion": {
         "category": "combat",
         "params": ["duration", "volume"],

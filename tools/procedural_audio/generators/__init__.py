@@ -1,5 +1,5 @@
 """Procedural audio generators by category."""
-from .combat import gunfight, laser_blast, plasma_rifle, railgun, explosion, impact_thud
+from .combat import gunfight, laser_blast, plasma_rifle, railgun, cannon_fire, bullet_impact, explosion, impact_thud
 from .vehicles import engine_idle, traffic
 from .nature import wind, rain
 from .mechanical import transform_mechanical, servo, metal_stress
@@ -10,6 +10,8 @@ __all__ = [
     "laser_blast",
     "plasma_rifle",
     "railgun",
+    "cannon_fire",
+    "bullet_impact",
     "explosion",
     "impact_thud",
     "engine_idle",
