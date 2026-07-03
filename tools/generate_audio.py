@@ -192,6 +192,17 @@ import wave
 # Add project root to path for importing lib if needed
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
+# Import the procedural audio engine (algorithmic SFX, no external samples).
+# Add tools/ to path so `import procedural_audio` works regardless of cwd.
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+try:
+    import procedural_audio
+    HAS_PROCEDURAL_AUDIO = True
+except Exception as e:
+    print(f"[WARNING] Procedural audio engine unavailable: {e}")
+    procedural_audio = None
+    HAS_PROCEDURAL_AUDIO = False
+
 # Resolve episode path from CLI argument
 EPISODE = sys.argv[1] if len(sys.argv) > 1 else "."
 if not os.path.isabs(EPISODE):
@@ -1506,6 +1517,45 @@ async def generate(force_tts=False):
         generate_tennis_hit_sfx(tennis_hit_path)
         for t in tennis_hit_times:
             all_sfx_events.append({"file": tennis_hit_path, "startTime": t})
+
+    # Render procedural ambient / SFX bed from {SFX:Procedural|...} story tags.
+    if HAS_PROCEDURAL_AUDIO:
+        procedural_events = []
+        for ev in story_events:
+            if ev.get("type") == "SFX":
+                body = ev.get("body", "")
+                if body.startswith("Procedural|"):
+                    parts = {k.strip(): v.strip() for k, v in
+                             (p.split("=", 1) for p in body.split("|") if "=" in p)}
+                    try:
+                        event = {
+                            "type": parts.get("type"),
+                            "start": float(parts.get("start", ev["startTime"])),
+                            "end": float(parts.get("end", ev["endTime"])),
+                            "volume": float(parts.get("volume", 1.0)),
+                        }
+                        # Forward optional generator params.
+                        for key in ("density", "intensity"):
+                            if key in parts:
+                                event[key] = float(parts[key])
+                        if event["type"]:
+                            procedural_events.append(event)
+                    except ValueError as e:
+                        print(f"[ProceduralAudio] Skipping malformed tag '{body}': {e}")
+
+        if procedural_events:
+            max_time = max(e["endTime"] for e in entries) if entries else 70.0
+            procedural_sfx_path = os.path.join(OUTPUT_DIR, "_procedural_sfx.wav")
+            print(f"\n[ProceduralAudio] Rendering {len(procedural_events)} event(s) -> {procedural_sfx_path}")
+            for ev in procedural_events:
+                print(f"  - {ev['type']} @ {ev['start']:.2f}s-{ev['end']:.2f}s vol={ev['volume']}")
+            procedural_audio.render(procedural_events, max_time + 1.0, procedural_sfx_path)
+            all_sfx_events.append({
+                "file": procedural_sfx_path,
+                "startTime": 0.0,
+                "endTime": max_time + 1.0,
+                "volume": 1.0,
+            })
 
     mix_audio(manifest, bgm_path, all_sfx_events if all_sfx_events else None)
 

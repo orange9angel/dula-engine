@@ -40,8 +40,10 @@ dula-story   ← 内容仓库（剧本/配置/素材/输出）
 - `render.html` + `render.js`：浏览器端 Three.js 渲染入口。
 - `generate_video.js`：Node 端主渲染管线（Puppeteer → PNG → ffmpeg）。
 - `tools/generate_audio.py`：TTS + BGM + SFX 混音，生成 `mixed.wav` + `manifest.json`。
+- `tools/procedural_audio/`：纯算法音效/环境音生成器（无外部素材）。
 - `tools/verify_shots.js`：逐镜头验证（截图检查，不生成完整视频）。
 - `lib/StoryParser.js`：`.story` 剧本解析器（支持命名空间标签）。
+- `lib/ProceduralAudioProtocol.js`：`{SFX:Procedural|...}` 协议解析器。
 - `storyboard/Storyboard.js`：导演核心（场景/角色/动画/运镜/音乐/球事件调度）。
 
 ---
@@ -79,6 +81,7 @@ dula-engine/
 │   └── VoiceBase.js           # 配音基类
 └── tools/
     ├── generate_audio.py      # 音频管线
+    ├── procedural_audio/      # 算法音效/环境音生成器
     ├── verify_shots.js        # 逐镜头验证
     ├── verify.html            # 验证用浏览器入口
     └── verify_render.js       # 验证用渲染逻辑
@@ -192,6 +195,10 @@ npm link dula-engine
 | `{Event:Move\|y>2}` / `{Camera:WhipPan}` | `whoosh_fast` |
 | `{Event:Move\|y<0}` / 负 Y 位移 | `fall_whistle` |
 | `{Camera:Shake}` | `impact_thud` |
+| `{SFX:Procedural|type=gunfight|...}` | 程序化枪战/能量武器交火 |
+| `{SFX:Procedural|type=engine_idle|...}` | 程序化引擎怠速轰鸣 |
+| `{SFX:Procedural|type=wind|...}` | 程序化风声 |
+| `{SFX:Procedural|type=vault_hum|...}` | 程序化科幻能量室嗡鸣 |
 
 - **手动素材优先**：扫描 `materials/sfx/` 和 `assets/audio/sfx/` 中的 `.wav` 文件，通过模糊匹配（`whoosh_fast` 优先于 `whoosh`）找到最佳匹配。
 - **Procedural 回退**：若手动素材缺失，使用 Python `wave` 模块生成：
@@ -200,6 +207,27 @@ npm link dula-engine
   - `impact_thud` — 低频衰减脉冲
   - `whoosh_fast` — 白噪声爆发
   - `takecopter_spin` — 正弦波叠加模拟旋转声
+
+#### 程序化环境音（Procedural Ambient）
+`tools/procedural_audio/` 提供了一套纯算法生成的音效/环境音组件，不依赖外部素材。通过 `{SFX:Procedural|...}` 协议在 `script.story` 中声明：
+
+```text
+{SFX:Procedural|type=engine_idle|start=0|end=35|volume=0.12}
+{SFX:Procedural|type=traffic|start=0|end=35|volume=0.06}
+{SFX:Procedural|type=gunfight|start=36|end=40|density=0.6|volume=0.35}
+{SFX:Procedural|type=wind|start=44.5|end=94.5|intensity=0.4|volume=0.18}
+{SFX:Procedural|type=vault_hum|start=88|end=140|volume=0.12}
+```
+
+| 参数 | 说明 |
+|------|------|
+| `type` | 音效类型：`gunfight`, `laser_blast`, `explosion`, `impact_thud`, `engine_idle`, `traffic`, `wind`, `rain`, `transform_mechanical`, `servo`, `metal_stress`, `vault_hum`, `energy_hum` |
+| `start` / `end` | 时间轴起止（秒） |
+| `volume` | 相对音量（0-1） |
+| `density` | 枪声/车流密度（仅 `gunfight`, `traffic`） |
+| `intensity` | 强度（仅 `wind`, `rain`） |
+
+`dula-audio` 会自动解析这些标签、渲染 `_procedural_sfx.wav` 并混入最终音频。
 
 ### Stage 4 — 最终混音
 3-stage ffmpeg 混音（解决 Windows 命令行过长问题）：
@@ -225,6 +253,7 @@ npm link dula-engine
 | `{Music:Action\|key=value}` | 配乐提示 |
 | `{Ball:Action\|key=value}` | 球事件（Serve/Return/FlyTo…） |
 | `{SFX:Action\|key=value}` | 音效触发（手动指定 SFX 文件名） |
+| `{SFX:Procedural|type=...|start=...|end=...|volume=...}` | 程序化音效/环境音（无素材） |
 | `{Prop:Action\|key=value}` | 道具操作（Racket attach/detach…） |
 | `{Position:Character\|key=value}` | 角色站位（spot 或坐标） |
 | `{Event:Action\|key=value}` | 通用剧情事件（Move/Animate…） |
@@ -314,6 +343,8 @@ node tools/verify_shots.js <episode-dir>
 | TTS 朗读标签 | ✅ 已修复 | `generate_audio.py` 漏过滤 `{Ball:...}`/`{Prop:...}`/`{Position:...}`/`{Event:...}`，导致 TTS 读出英文参数。v0.1.6 已修复。 |
 | BGM 素材缺失 | ✅ 已修复 | `generate_bgm.py` 支持 procedural ADSR 合成回退，无需手动素材即可出片。 |
 | SFX 自动调度 | ✅ 已落地 | `generate_audio.py` 从 story events 自动提取并调度 SFX。 |
+
+| 程序化环境音 | ✅ 已落地 | `tools/procedural_audio/` + `{SFX:Procedural|...}` 协议，无需素材即可生成环境音。 |
 | 多 TTS 引擎 | ✅ 已落地 | 支持 edge-tts（默认）/ ElevenLabs / DashScope CosyVoice，通过 `--provider` 切换。 |
 | MusicDirector 配乐调度 | ✅ 已落地 | 支持 Cue / Duck / HitPoint / Stem / Crossfade，实现 BGM 随剧情变化。 |
 | 对话自然度 | ⚠️ 可优化 | 「必中球拍」梗的对话仍不够自然（属于内容层问题）。 |
