@@ -13,3 +13,5 @@ __pycache__/
 *.tgz
 gh.exe
 gh.zip
+
+tools/procedural_audio/_test_output/

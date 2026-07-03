@@ -21,8 +21,22 @@ REGISTRY = {
         "category": "combat",
         "params": ["duration", "volume"],
         "defaults": {},
-        "description": "单发科幻能量枪：下降啁啾 + 噪音爆发",
+        "description": "单发能量步枪：机械扳机 + 中频裂响 + 金属尾音",
         "generator": generators.laser_blast,
+    },
+    "plasma_rifle": {
+        "category": "combat",
+        "params": ["duration", "volume"],
+        "defaults": {},
+        "description": "等离子步枪：沸腾能量放电 + 机械机身",
+        "generator": generators.plasma_rifle,
+    },
+    "railgun": {
+        "category": "combat",
+        "params": ["duration", "volume"],
+        "defaults": {},
+        "description": "重型电磁轨道炮：尖锐机械爆裂 + 次低音尾震",
+        "generator": generators.railgun,
     },
     "explosion": {
         "category": "combat",
