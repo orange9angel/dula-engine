@@ -588,6 +588,12 @@ export class Storyboard {
           }
         }
       }
+
+      // 5. ── NEW: 根据语气和场景风格自动触发夸张效果 ──
+      if (char.exaggerationSystem) {
+        char.exaggerationSystem.setSceneStyle(sceneCursor);
+        char.exaggerationSystem.autoTriggerFromTone(toneResult);
+      }
     }
 
     // Queue camera moves from SRT entries
@@ -805,6 +811,9 @@ export class Storyboard {
 
     // CombatDirector: initialize and process combat tags
     this._setupCombatDirector();
+
+    // ── NEW: 处理显式 {Exaggeration:xxx} 标签 ──
+    this._setupExaggerations();
 
     // SceneDirector: initialize and process scene director tags
     this._setupSceneDirector();
@@ -2285,6 +2294,28 @@ export class Storyboard {
   /**
    * Initialize CombatDirector and process combat tags from .story entries.
    */
+  _setupExaggerations() {
+    for (const entry of this.entries) {
+      if (!entry.exaggerations || entry.exaggerations.length === 0) continue;
+      const char = this.characters.get(entry.character);
+      if (!char || !char.exaggerationSystem) continue;
+
+      for (const ex of entry.exaggerations) {
+        const { name, options } = ex;
+        // 延迟触发：在 entry 的 startTime 触发
+        setTimeout(() => {
+          if (name.includes('_')) {
+            // 预设组合
+            char.exaggerationSystem.triggerPreset(name, options);
+          } else {
+            // 单个效果
+            char.exaggerationSystem.trigger(name, options);
+          }
+        }, (entry.startTime - this.startTime) * 1000);
+      }
+    }
+  }
+
   _setupCombatDirector() {
     const CombatDirectorClass = DirectorRegistry['CombatDirector'];
     if (!CombatDirectorClass) return;

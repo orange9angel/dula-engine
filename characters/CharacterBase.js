@@ -3,6 +3,7 @@ import { ActionMatrixController } from '../animations/ActionMatrixController.js'
 import { RigAdapter } from '../rigging/RigAdapter.js';
 import { FacialAnimationSystem } from '../lib/FacialAnimationSystem.js';
 import { applyMouthCueToShape, sampleMouthCue } from '../lib/AudioMouthCue.js';
+import { ExaggerationSystem } from '../lib/ExaggerationSystem.js';
 
 /**
  * Character archetype tags for animation compatibility.
@@ -322,9 +323,17 @@ export class CharacterBase {
   }
 
   update(time, delta) {
+    // ── Exaggeration System (卡通/漫画夸张效果) ──
+    this.exaggerationSystem = new ExaggerationSystem(this);
+
     // ── Facial Animation System (统一调度 viseme / emotion / blink / eyeTracking) ──
     if (this.facialSystem) {
       this.facialSystem.update(time, delta);
+    }
+
+    // ── Exaggeration System (卡通/漫画夸张效果) ──
+    if (this.exaggerationSystem) {
+      this.exaggerationSystem.update(delta);
     }
 
     // Speaking (mouth animation now handled by facialSystem)
