@@ -60,8 +60,8 @@ export class CharacterBase {
     // Reusable light effect components (GlowEffect, AuraEffect, etc.)
     this.lightEffects = {};     // { name: effectInstance }
     // ── Weapon system ──
-    this.weaponMesh = null;     // current weapon 3D mesh
-    this.weaponState = 'none';  // none | equipped | firing
+    this.weaponComponent = new WeaponComponent(this);
+    this.weaponMeshes = {};     // weapon type -> THREE.Object3D template
     this.baseY = 0.12;
     this.isSpeaking = false;
     this.speakStartTime = 0;
@@ -814,6 +814,59 @@ export class CharacterBase {
    */
   setWeaponVisible(visible) {
     if (this.weaponMesh) this.weaponMesh.visible = visible;
+  }
+
+  // ── Weapon system (delegated to WeaponComponent) ──
+  /**
+   * Show/equip a weapon.
+   * @param {Weapon|string} weapon — Weapon instance or weapon type key
+   * @param {string} attachPoint — 'rightHand' | 'leftHand' | 'back' | 'hip'
+   */
+  showWeapon(weapon, attachPoint = 'rightHand') {
+    if (typeof weapon === 'string') {
+      const mesh = this.weaponMeshes[weapon];
+      if (!mesh) {
+        console.warn(`[CharacterBase] Weapon mesh not found: ${weapon}`);
+        return;
+      }
+      weapon = new (require('../lib/Weapon.js').Weapon)({
+        type: weapon,
+        mesh: mesh,
+        defaultAttach: attachPoint,
+      });
+    }
+    this.weaponComponent.equip(weapon, attachPoint);
+  }
+
+  /**
+   * Hide/unequip the current weapon.
+   */
+  hideWeapon() {
+    this.weaponComponent.holster();
+  }
+
+  /**
+   * Set weapon visibility without removing it.
+   */
+  setWeaponVisible(visible) {
+    this.weaponComponent.setVisible?.(visible);
+    if (this.weaponComponent.weaponMesh) {
+      this.weaponComponent.weaponMesh.visible = visible;
+    }
+  }
+
+  /**
+   * Get current weapon muzzle world position.
+   */
+  getMuzzleWorldPosition() {
+    return this.weaponComponent.getMuzzleWorldPosition();
+  }
+
+  /**
+   * Get current weapon eject port world position.
+   */
+  getEjectWorldPosition() {
+    return this.weaponComponent.getEjectWorldPosition();
   }
 
   /**
