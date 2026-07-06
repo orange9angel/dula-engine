@@ -1,6 +1,7 @@
 import * as THREE from 'three';
 import { ActionMatrixController } from '../animations/ActionMatrixController.js';
 import { RigAdapter } from '../rigging/RigAdapter.js';
+import { FacialAnimationSystem } from '../lib/FacialAnimationSystem.js';
 import { applyMouthCueToShape, sampleMouthCue } from '../lib/AudioMouthCue.js';
 
 /**
@@ -101,6 +102,10 @@ export class CharacterBase {
     // 运行时动作矩阵系统：动画通过矩阵描述姿势，由控制器统一应用
     // 延迟初始化：在首次播放矩阵动画时创建，避免无矩阵动画的角色浪费资源
     this._actionMatrix = null;
+
+    // ── Facial Animation System ──
+    // 统一调度 viseme / emotion / blink / eyeTracking，解决 TTS 与表情冲突
+    this.facialSystem = new FacialAnimationSystem(this);
     /**
      * Archetype tags describing this character's body type and capabilities.
      * Used by animations to check compatibility.
@@ -133,6 +138,9 @@ export class CharacterBase {
     this.speakText = '';
     this.visemeSequence = [];
     this.mouthCue = null;
+    if (this.facialSystem) {
+      this.facialSystem.setViseme('rest', 0);
+    }
     if (this.mouth) {
       this.mouth.scale.set(this.mouthBaseScaleX, this.mouthBaseScaleY, this.mouthBaseScaleZ);
       if (this.mouthBaseY !== undefined) {
@@ -314,24 +322,29 @@ export class CharacterBase {
   }
 
   update(time, delta) {
-    // Speaking
+    // ── Facial Animation System (统一调度 viseme / emotion / blink / eyeTracking) ──
+    if (this.facialSystem) {
+      this.facialSystem.update(time, delta);
+    }
+
+    // Speaking (mouth animation now handled by facialSystem)
     if (this.isSpeaking) {
       if (time >= this.speakEndTime) {
         this.stopSpeaking();
       } else {
-        this.animateMouth(time, delta);
+        // viseme 由 facialSystem 驱动，这里只更新序列索引
+        this._updateVisemeSequence(time);
         this.animateBody(time, delta);
       }
     }
 
-    // Auto blink (runs even when not speaking)
+    // Auto blink (now handled by facialSystem, kept for backward compat)
     this._updateBlink(delta);
 
-    // Eye / head tracking
+    // Eye / head tracking (now handled by facialSystem, kept for backward compat)
     this.updateEyeTracking(time, delta);
 
     // Subtle "alive" head sway when a character is engaged in eye contact.
-    // This breaks the puppet-like frozen stare while keeping the gaze on target.
     this._applyConversationMicroMotion(time, delta);
 
     // ── Action Matrix System (v3) ──
@@ -546,17 +559,21 @@ export class CharacterBase {
   }
 
   animateMouth(time, delta) {
+    // 已迁移到 FacialAnimationSystem 统一处理
+    // 保留方法体供旧代码调用，实际 viseme 由 _updateVisemeSequence 驱动
     if (!this.mouth) return;
     this.mouth.visible = true;
+    this._updateVisemeSequence(time);
+  }
 
-    const shape = this.getCurrentMouthShape(time);
-
-    // Apply expression tension from active face animation
-    const tension = this._faceTension || 0;
-    const tensionScale = 1.0 - tension * 0.25;
-
-    // Detect mouth geometry type — handle Mesh wrapper (Group children)
-    let geoType = this.mouth.geometry?.type || 'Unknown';
+  _updateVisemeSequence(time) {
+    if (!this.visemeSequence || this.visemeSequence.length === 0) return;
+    const elapsed = time - this.speakStartTime;
+    const { shape, weight } = sampleMouthCue(this.visemeSequence, elapsed);
+    if (this.facialSystem) {
+      this.facialSystem.setViseme(shape, weight);
+    }
+  }
     // If mouth is a Mesh wrapping another geometry (e.g. TubeGeometry inside a Group),
     // fall through to the default TubeGeometry path which is safest for smile curves
     if (geoType === 'Mesh') {

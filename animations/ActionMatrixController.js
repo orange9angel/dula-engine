@@ -384,10 +384,75 @@ export class ActionMatrixController {
       c._faceTension = 0;
     }
 
+    // ── 面部：通过 facialSystem 统一应用，或旧路径直接应用 ──
+    if (c.facialSystem) {
+      this._applyPoseToFacialSystem(pose, faceBase);
+    } else {
+      this._applyPoseToMeshDirect(pose, faceBase);
+    }
+  }
+
+  /**
+   * 通过 FacialAnimationSystem 统一应用面部姿态
+   * 将几何 pose 转换为语义 emotion 参数
+   */
+  _applyPoseToFacialSystem(pose, faceBase) {
+    const c = this.character;
+    const fs = c.facialSystem;
+    if (!fs) return;
+
+    const emotion = { weight: 1 };
+
+    // ── 嘴型 ──
     if (pose.mouth && c.mouth) {
       const m = pose.mouth;
       const baseM = faceBase.mouth || {};
-      // Only apply direct mouth transforms when not speaking (viseme handles speaking mouth)
+      const scaleY = (baseM.sy || c.mouthBaseScaleY || 1) * (1 + (m.sy || 0));
+      const scaleX = (baseM.sx || c.mouthBaseScaleX || 1) * (1 + (m.sx || 0));
+      emotion.tension = m.tension || 0;
+      emotion.lipOffset = (m.py || 0) * 10;
+      emotion.lipWidth = (scaleX / (baseM.sx || 1)) - 1;
+    }
+
+    // ── 眉毛 ──
+    if (pose.eyebrows) {
+      const eb = pose.eyebrows;
+      if (eb.left) {
+        emotion.browLeft = (eb.left.py || 0) * 20;
+        emotion.browInner = (eb.left.rz || 0) * 5;
+      }
+      if (eb.right) {
+        emotion.browRight = (eb.right.py || 0) * 20;
+      }
+    }
+
+    // ── 眼皮 ──
+    if (pose.eyelids) {
+      if (pose.eyelids.left && pose.eyelids.left.sy !== undefined) {
+        emotion.eyelidClosed = Math.max(0, Math.min(1, pose.eyelids.left.sy * 2));
+      }
+      emotion.eyeSquint = (pose.eyelids.left?.sy || 0) * 0.5;
+    }
+
+    // ── 瞳孔 ──
+    if (pose.pupils) {
+      if (pose.pupils.left && pose.pupils.left.sx !== undefined) {
+        emotion.pupilDilate = (pose.pupils.left.sx - 1) * 2;
+      }
+    }
+
+    fs.setEmotion('matrix_pose', emotion);
+  }
+
+  /**
+   * 旧路径：直接应用到 mesh（兼容无 facialSystem 的角色）
+   */
+  _applyPoseToMeshDirect(pose, faceBase) {
+    const c = this.character;
+
+    if (pose.mouth && c.mouth) {
+      const m = pose.mouth;
+      const baseM = faceBase.mouth || {};
       if (!c.isSpeaking) {
         if (m.sx !== undefined) c.mouth.scale.x = (baseM.sx || c.mouthBaseScaleX || 1) * (1 + m.sx);
         if (m.sy !== undefined) c.mouth.scale.y = (baseM.sy || c.mouthBaseScaleY || 1) * (1 + m.sy);
@@ -457,7 +522,7 @@ export class ActionMatrixController {
   }
 
   /**
-   * 是否允许应用“ alive ”呼吸/微动 idle。
+   * 是否允许应用" alive "呼吸/微动 idle。
    * 机器人、载具、机械类角色不需要呼吸微动，否则会和 CharacterBase 的
    * _updateIdle 冲突，造成 2:11 处那种可见抖动。
    */
