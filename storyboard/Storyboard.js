@@ -772,8 +772,8 @@ export class Storyboard {
       }
     }
 
-    # Build per-scene door event map so events are scheduled on whichever
-    # scene instance is active when the switch happens (including recreated scenes).
+    // Build per-scene door event map so events are scheduled on whichever
+    // scene instance is active when the switch happens (including recreated scenes).
     this.doorEventsByScene = new Map();
     this._doorEventsScheduledScenes = new Set();
     for (const ev of this.storyEvents) {
