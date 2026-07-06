@@ -1448,6 +1448,11 @@ export class Storyboard {
       }
     }
 
+    // Update exaggerations - trigger effects at their scheduled times
+    if (this._pendingExaggerations) {
+      this._updateExaggerations(t);
+    }
+
     // Scene switches — find the most recent scene entry whose startTime has passed
     let targetScene = null;
     for (const entry of this.entries) {
@@ -2295,23 +2300,34 @@ export class Storyboard {
    * Initialize CombatDirector and process combat tags from .story entries.
    */
   _setupExaggerations() {
+    this._pendingExaggerations = [];
     for (const entry of this.entries) {
       if (!entry.exaggerations || entry.exaggerations.length === 0) continue;
       const char = this.characters.get(entry.character);
       if (!char || !char.exaggerationSystem) continue;
 
       for (const ex of entry.exaggerations) {
-        const { name, options } = ex;
-        // 延迟触发：在 entry 的 startTime 触发
-        setTimeout(() => {
-          if (name.includes('_')) {
-            // 预设组合
-            char.exaggerationSystem.triggerPreset(name, options);
-          } else {
-            // 单个效果
-            char.exaggerationSystem.trigger(name, options);
-          }
-        }, (entry.startTime - this.startTime) * 1000);
+        this._pendingExaggerations.push({
+          char,
+          ex,
+          startTime: entry.startTime,
+          triggered: false,
+        });
+      }
+    }
+  }
+
+  _updateExaggerations(currentTime) {
+    for (const pending of this._pendingExaggerations) {
+      if (!pending.triggered && currentTime >= pending.startTime) {
+        pending.triggered = true;
+        const { ex, char } = pending;
+        console.log(`[ExaggerationSystem] Triggering ${ex.name} at t=${currentTime.toFixed(2)}`);
+        if (ex.name.includes('_')) {
+          char.exaggerationSystem.triggerPreset(ex.name, ex.options || ex);
+        } else {
+          char.exaggerationSystem.trigger(ex.name, ex.options || ex);
+        }
       }
     }
   }
