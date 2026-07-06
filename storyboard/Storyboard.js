@@ -11,6 +11,9 @@ import { PostProcessRegistry } from '../postprocessing/index.js';
 import { MusicDirector, MusicCue } from '../lib/MusicDirector.js';
 import { HitstopManager } from '../lib/HitstopManager.js';
 import { generateMouthCue } from '../lib/AudioMouthCue.js';
+import { ToneDirector } from '../lib/ToneDirector.js';
+import { ToneSSML } from '../lib/ToneSSML.js';
+import { EMOTION_PRESETS } from '../lib/FacialAnimationSystem.js';
 import { faceAnimationForEmotion } from '../lib/FaceEmotionMap.js';
 import { expandCombatAction } from '../lib/CombatActionRegistry.js';
 
@@ -65,6 +68,7 @@ export class Storyboard {
     this.timeScaleEvents = []; // { startTime, endTime, scale }
     this.combatActionSFX = []; // { time, name } 由 Combat:Action 组件声明的可选 JS 音效
     this.combatActionFX = []; // { time, type, target, duration, color } 由 Combat:Action 组件声明的光效
+    this.toneDirector = new ToneDirector(); // 语气导演：分析台词情感，驱动 TTS/表情/Combat 同步
   }
 
   _queueHurdleRun(char, ev) {
@@ -529,24 +533,35 @@ export class Storyboard {
     // Auto-play facial expressions from TTS-inferred emotion when no explicit
     // {Face...} tag was provided. This gives characters expression even on
     // plain dialogue entries.
+    // ── NEW: ToneDirector 分析台词语气，驱动表情 + TTS 参数 ──
     for (const entry of this.entries) {
       if (!entry.character || !entry.dialogue) continue;
       const char = this.characters.get(entry.character);
       if (!char) continue;
 
+      // 1. 分析语气
+      const sceneCursor = entry.scene || this.currentSceneName || 'neutral';
+      const toneResult = this.toneDirector.analyze(entry.dialogue, {
+        scene: sceneCursor,
+        explicitTone: entry.tone,
+        precedingAction: entry.precedingAction,
+        characterState: entry.characterState,
+      });
+      entry._toneResult = toneResult; // 保存供后续使用
+
+      // 2. 应用表情到 FacialAnimationSystem
+      this.toneDirector.applyToFacialSystem(char, toneResult);
+
+      // 3. 如果没有显式表情动画，根据 tone 自动播放
       const hasExplicitFace = (entry.animations || []).some(name =>
         typeof name === 'string' && name.startsWith('Face')
       );
-      if (hasExplicitFace) continue;
-
-      const faceAnimName = faceAnimationForEmotion(entry.emotion || entry.voiceEmotion);
-      if (!faceAnimName) continue;
-
-      const AnimClass = AnimationRegistry[faceAnimName];
-      if (!AnimClass) continue;
-
-      const entryDuration = entry.endTime - entry.startTime;
-      char.playAnimation(AnimClass, entry.startTime, entryDuration);
+      if (!hasExplicitFace) {
+        const emotion = toneResult.emotion;
+        if (emotion && EMOTION_PRESETS[emotion]) {
+          char.facialSystem.setEmotion(emotion, EMOTION_PRESETS[emotion]);
+        }
+      }
     }
 
     // Queue camera moves from SRT entries
@@ -725,8 +740,8 @@ export class Storyboard {
       }
     }
 
-    // Build per-scene door event map so events are scheduled on whichever
-    // scene instance is active when the switch happens (including recreated scenes).
+    # Build per-scene door event map so events are scheduled on whichever
+    # scene instance is active when the switch happens (including recreated scenes).
     this.doorEventsByScene = new Map();
     this._doorEventsScheduledScenes = new Set();
     for (const ev of this.storyEvents) {
@@ -750,6 +765,9 @@ export class Storyboard {
       }
       this._doorEventsScheduledScenes.add(initialDoorSceneName);
     }
+
+    // ── Export tone data for Python audio pipeline ──
+    this._exportToneManifest();
 
     // Tennis ball & swing choreography is handled in switchScene('ParkScene')
     // via CourtDirector, so that trajectories are computed from actual positions.
@@ -1521,6 +1539,20 @@ export class Storyboard {
           if (!char.isSpeaking || char._activeSpeakKey !== speakKey) {
             char.speak(entry.startTime, speakDuration, dialogueText, mouthCue);
             char._activeSpeakKey = speakKey;
+          }
+
+          // ── ToneDirector 运行时驱动表情 ──
+          if (entry._toneResult) {
+            // 更新嘴型张力（让 viseme 更贴合语气）
+            if (char.facialSystem) {
+              char.facialSystem.setEmotion(
+                entry._toneResult.emotion,
+                {
+                  ...EMOTION_PRESETS[entry._toneResult.emotion],
+                  tension: entry._toneResult.mouthTension || 0,
+                }
+              );
+            }
           }
 
           // Eye contact: infer the conversation partner from the active camera first,
@@ -2440,6 +2472,56 @@ export class Storyboard {
         }
       }
     }
+  }
+
+  /**
+   * Export tone analysis manifest for Python audio pipeline.
+   * Saves to assets/audio/tone_manifest.json alongside the audio manifest.
+   */
+  _exportToneManifest() {
+    const toneEntries = this.entries
+      .filter(e => e.character && e.dialogue && e._toneResult)
+      .map(e => ({
+        index: e.index,
+        character: e.character,
+        text: e.dialogue,
+        startTime: e.startTime,
+        endTime: e.endTime,
+        toneId: e._toneResult.toneId,
+        toneSource: e._toneResult.source,
+        confidence: e._toneResult.confidence,
+        ttsParams: e._toneResult.ttsParams,
+        emotion: e._toneResult.emotion,
+        mouthTension: e._toneResult.mouthTension,
+        intensity: e._toneResult.intensity,
+      }));
+
+    if (toneEntries.length === 0) return;
+
+    const manifest = {
+      version: '1.0',
+      generatedAt: new Date().toISOString(),
+      entryCount: toneEntries.length,
+      entries: toneEntries,
+    };
+
+    // Try to save via available export mechanisms
+    if (typeof window !== 'undefined' && window.__dulaExportToneManifest) {
+      window.__dulaExportToneManifest(manifest);
+    }
+
+    // Also attach to storyboard for runtime access
+    this.toneManifest = manifest;
+
+    console.log(`[ToneDirector] Exported ${toneEntries.length} tone entries to manifest.`);
+  }
+
+  /**
+   * Get tone result for a specific entry index.
+   */
+  getToneForEntry(index) {
+    const entry = this.entries.find(e => e.index === index);
+    return entry?._toneResult || null;
   }
 
   /**

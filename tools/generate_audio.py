@@ -1325,6 +1325,20 @@ async def generate(force_tts=False):
     entries, music_cues, story_events = parse_story(story_text)
     voice_config = load_voice_config()
     tennis_hit_times = load_tennis_hit_times()
+    
+    # ── NEW: Load tone manifest from frontend analysis ──
+    tone_manifest = {}
+    tone_path = os.path.join(EPISODE, "assets", "audio", "tone_manifest.json")
+    if os.path.exists(tone_path):
+        try:
+            with open(tone_path, "r", encoding="utf-8") as f:
+                tone_data = json.load(f)
+            for te in tone_data.get("entries", []):
+                tone_manifest[te["index"]] = te
+            print(f"[ToneDirector] Loaded {len(tone_manifest)} tone entries from manifest.")
+        except Exception as e:
+            print(f"[ToneDirector] Failed to load tone manifest: {e}")
+    
     manifest = {
         "entries": [],
     }
@@ -1389,6 +1403,31 @@ async def generate(force_tts=False):
 
         # Resolve emotion-aware parameters
         params = resolve_voice_params(cfg, emotion)
+        
+        # ── NEW: Merge ToneDirector parameters from manifest ──
+        tone_entry = tone_manifest.get(entry["index"])
+        if tone_entry and tone_entry.get("ttsParams"):
+            tts = tone_entry["ttsParams"]
+            # Convert semantic pitch to edge-tts format
+            if "pitch" in tts:
+                semitones = tts["pitch"]
+                if semitones == 0:
+                    params["pitch"] = "+0Hz"
+                else:
+                    params["pitch"] = f"{semitones:+d}st" if abs(semitones) <= 5 else f"{semitones * 6:+d}Hz"
+            # Convert speed to rate
+            if "speed" in tts:
+                speed = tts["speed"]
+                pct = round((speed - 1) * 100)
+                params["rate"] = f"{pct:+d}%"
+            # Convert volume
+            if "volume" in tts:
+                vol = tts["volume"]
+                pct = round((vol - 1) * 100)
+                params["volume"] = f"{pct:+d}%"
+            # Log tone override
+            print(f"  [ToneDirector] {char}: tone={tone_entry['toneId']}, pitch={params.get('pitch')}, rate={params.get('rate')}, vol={params.get('volume')}")
+        
         if not params.get("voice") and not params.get("model"):
             print(f"Warning: no voice resolved for {char} (emotion={emotion}), skipping.")
             continue
@@ -1455,6 +1494,8 @@ async def generate(force_tts=False):
                 "file": filename,
                 "audioDuration": audio_duration,
                 "emotion": emotion or None,
+                "tone": tone_entry.get("toneId") if tone_entry else None,
+                "toneConfidence": tone_entry.get("confidence") if tone_entry else None,
             }
         )
 
