@@ -272,6 +272,7 @@ export const ANIM_TO_POSE_TYPE = {
   KneeStrike: PoseType.ACTION,
   SpiritSwordSwing: PoseType.ACTION,
   SpiritGunFire: PoseType.ACTION,
+  PlasmaRifle: PoseType.ACTION,
   DashForward: PoseType.ACTION,
   HeroLanding: PoseType.ACTION,
   // reaction

@@ -330,30 +330,30 @@ export class ActionMatrixController {
     const base = this._baselinePose;
     if (!base) return;
 
-    const apply = (targetObj, baseline, offset) => {
+    const apply = (jointName, targetObj, baseline, offset) => {
       if (!targetObj || !baseline) return;
       if (offset.rx !== undefined) targetObj.rotation.x = baseline.rx + offset.rx;
       if (offset.ry !== undefined) targetObj.rotation.y = baseline.ry + offset.ry;
       if (offset.rz !== undefined) targetObj.rotation.z = baseline.rz + offset.rz;
     };
 
-    apply(c.headGroup, base.headGroup, pose.headGroup || {});
-    apply(c.rightClavicle, base.rightClavicle, pose.rightClavicle || {});
-    apply(c.leftClavicle, base.leftClavicle, pose.leftClavicle || {});
-    apply(c.rightArm, base.rightShoulder, pose.rightShoulder || {});
-    apply(c.rightElbow, base.rightElbow, pose.rightElbow || {});
-    apply(c.rightElbowTwist, base.rightElbowTwist, pose.rightElbowTwist || {});
-    apply(c.rightWrist, base.rightWrist, pose.rightWrist || {});
-    apply(c.leftArm, base.leftShoulder, pose.leftShoulder || {});
-    apply(c.leftElbow, base.leftElbow, pose.leftElbow || {});
-    apply(c.leftElbowTwist, base.leftElbowTwist, pose.leftElbowTwist || {});
-    apply(c.leftWrist, base.leftWrist, pose.leftWrist || {});
-    apply(c.rightLeg, base.rightHip, pose.rightHip || {});
-    apply(c.rightKnee, base.rightKnee, pose.rightKnee || {});
-    apply(c.rightAnkle, base.rightAnkle, pose.rightAnkle || {});
-    apply(c.leftLeg, base.leftHip, pose.leftHip || {});
-    apply(c.leftKnee, base.leftKnee, pose.leftKnee || {});
-    apply(c.leftAnkle, base.leftAnkle, pose.leftAnkle || {});
+    apply('headGroup', c.headGroup, base.headGroup, pose.headGroup || {});
+    apply('rightClavicle', c.rightClavicle, base.rightClavicle, pose.rightClavicle || {});
+    apply('leftClavicle', c.leftClavicle, base.leftClavicle, pose.leftClavicle || {});
+    apply('rightShoulder', c.rightArm, base.rightShoulder, pose.rightShoulder || {});
+    apply('rightElbow', c.rightElbow, base.rightElbow, pose.rightElbow || {});
+    apply('rightElbowTwist', c.rightElbowTwist, base.rightElbowTwist, pose.rightElbowTwist || {});
+    apply('rightWrist', c.rightWrist, base.rightWrist, pose.rightWrist || {});
+    apply('leftShoulder', c.leftArm, base.leftShoulder, pose.leftShoulder || {});
+    apply('leftElbow', c.leftElbow, base.leftElbow, pose.leftElbow || {});
+    apply('leftElbowTwist', c.leftElbowTwist, base.leftElbowTwist, pose.leftElbowTwist || {});
+    apply('leftWrist', c.leftWrist, base.leftWrist, pose.leftWrist || {});
+    apply('rightHip', c.rightLeg, base.rightHip, pose.rightHip || {});
+    apply('rightKnee', c.rightKnee, base.rightKnee, pose.rightKnee || {});
+    apply('rightAnkle', c.rightAnkle, base.rightAnkle, pose.rightAnkle || {});
+    apply('leftHip', c.leftLeg, base.leftHip, pose.leftHip || {});
+    apply('leftKnee', c.leftKnee, base.leftKnee, pose.leftKnee || {});
+    apply('leftAnkle', c.leftAnkle, base.leftAnkle, pose.leftAnkle || {});
 
     if (pose.mesh && c.mesh && base.mesh) {
       const m = pose.mesh;
@@ -456,6 +456,21 @@ export class ActionMatrixController {
     }
   }
 
+  /**
+   * 是否允许应用“ alive ”呼吸/微动 idle。
+   * 机器人、载具、机械类角色不需要呼吸微动，否则会和 CharacterBase 的
+   * _updateIdle 冲突，造成 2:11 处那种可见抖动。
+   */
+  _shouldApplyIdleMotion() {
+    const c = this.character;
+    if (c.disableIdleMotion) return false;
+    const archetypes = c.archetypes || [];
+    if (archetypes.includes('robot') || archetypes.includes('vehicle') || archetypes.includes('machine')) {
+      return false;
+    }
+    return true;
+  }
+
   _applyIdlePose(time, delta = 0.016) {
     const c = this.character;
     const base = this._baselinePose;
@@ -471,35 +486,39 @@ export class ActionMatrixController {
       idlePose.mesh = {};
     }
 
-    // Subtle "alive" idle motion: breathing, weight shift, micro gestures.
-    // Keep amplitudes small so it reads as natural fidgeting, not dancing.
-    const t = time * 1.6;
-    idlePose.headGroup = {
-      rx: Math.sin(t * 0.5) * 0.012,
-      ry: Math.sin(t * 0.35) * 0.018,
-      rz: Math.sin(t * 0.28) * 0.008,
-    };
-    idlePose.rightClavicle = { rz: Math.sin(t * 0.6 + 0.3) * 0.015 };
-    idlePose.leftClavicle = { rz: -Math.sin(t * 0.6 + 0.3) * 0.015 };
-    // Keep arms slightly away from the torso in idle so they don't sink into the body.
-    const isMonkey = this.character.archetypes && this.character.archetypes.includes('monkey');
-    if (isMonkey) {
-      // Monkey arms hang forward; a small forward/outward rotation keeps them off the belly.
-      idlePose.rightShoulder = { rx: -0.22 + Math.sin(t * 0.6 + 0.3) * 0.04, ry: 0.12 };
-      idlePose.leftShoulder = { rx: -0.22 + Math.sin(t * 0.6 + 0.3) * 0.04, ry: -0.12 };
-    } else {
-      idlePose.rightShoulder = { rz: -0.12 + Math.sin(t * 0.6 + 0.3) * 0.02 };
-      idlePose.leftShoulder = { rz: 0.12 - Math.sin(t * 0.6 + 0.3) * 0.02 };
+    const allowMotion = this._shouldApplyIdleMotion();
+
+    if (allowMotion) {
+      // Subtle "alive" idle motion: breathing, weight shift, micro gestures.
+      // Keep amplitudes small so it reads as natural fidgeting, not dancing.
+      const t = time * 1.6;
+      idlePose.headGroup = {
+        rx: Math.sin(t * 0.5) * 0.012,
+        ry: Math.sin(t * 0.35) * 0.018,
+        rz: Math.sin(t * 0.28) * 0.008,
+      };
+      idlePose.rightClavicle = { rz: Math.sin(t * 0.6 + 0.3) * 0.015 };
+      idlePose.leftClavicle = { rz: -Math.sin(t * 0.6 + 0.3) * 0.015 };
+      // Keep arms slightly away from the torso in idle so they don't sink into the body.
+      const isMonkey = this.character.archetypes && this.character.archetypes.includes('monkey');
+      if (isMonkey) {
+        // Monkey arms hang forward; a small forward/outward rotation keeps them off the belly.
+        idlePose.rightShoulder = { rx: -0.22 + Math.sin(t * 0.6 + 0.3) * 0.04, ry: 0.12 };
+        idlePose.leftShoulder = { rx: -0.22 + Math.sin(t * 0.6 + 0.3) * 0.04, ry: -0.12 };
+      } else {
+        idlePose.rightShoulder = { rz: -0.12 + Math.sin(t * 0.6 + 0.3) * 0.02 };
+        idlePose.leftShoulder = { rz: 0.12 - Math.sin(t * 0.6 + 0.3) * 0.02 };
+      }
+      // Keep a slight natural bend in the elbows instead of forcing them straight.
+      idlePose.rightElbow = { rx: -0.08 + Math.sin(t * 0.7 + 1.0) * 0.04, ry: 0, rz: 0 };
+      idlePose.leftElbow = { rx: -0.08 + Math.sin(t * 0.7 + 2.5) * 0.04, ry: 0, rz: 0 };
+      idlePose.rightWrist = { ry: Math.sin(t * 0.9 + 0.5) * 0.04, rz: Math.sin(t * 0.65 + 0.2) * 0.03 };
+      idlePose.leftWrist = { ry: -Math.sin(t * 0.9 + 0.5) * 0.04, rz: -Math.sin(t * 0.65 + 0.2) * 0.03 };
+      idlePose.rightHip = { rx: Math.sin(t * 0.55 + 0.4) * 0.02 };
+      idlePose.leftHip = { rx: Math.sin(t * 0.55 + 0.4 + Math.PI) * 0.02 };
+      idlePose.rightKnee = { rx: Math.abs(Math.sin(t * 0.55 + 0.4)) * 0.025 };
+      idlePose.leftKnee = { rx: Math.abs(Math.sin(t * 0.55 + 0.4 + Math.PI)) * 0.025 };
     }
-    // Keep a slight natural bend in the elbows instead of forcing them straight.
-    idlePose.rightElbow = { rx: -0.08 + Math.sin(t * 0.7 + 1.0) * 0.04, ry: 0, rz: 0 };
-    idlePose.leftElbow = { rx: -0.08 + Math.sin(t * 0.7 + 2.5) * 0.04, ry: 0, rz: 0 };
-    idlePose.rightWrist = { ry: Math.sin(t * 0.9 + 0.5) * 0.04, rz: Math.sin(t * 0.65 + 0.2) * 0.03 };
-    idlePose.leftWrist = { ry: -Math.sin(t * 0.9 + 0.5) * 0.04, rz: -Math.sin(t * 0.65 + 0.2) * 0.03 };
-    idlePose.rightHip = { rx: Math.sin(t * 0.55 + 0.4) * 0.02 };
-    idlePose.leftHip = { rx: Math.sin(t * 0.55 + 0.4 + Math.PI) * 0.02 };
-    idlePose.rightKnee = { rx: Math.abs(Math.sin(t * 0.55 + 0.4)) * 0.025 };
-    idlePose.leftKnee = { rx: Math.abs(Math.sin(t * 0.55 + 0.4 + Math.PI)) * 0.025 };
 
     // Reset facial features to base state (prevent mouth/eyebrow drift)
     idlePose.mouth = { sx: 0, sy: 0, sz: 0, px: 0, py: 0, pz: 0, rx: 0, ry: 0, rz: 0 };

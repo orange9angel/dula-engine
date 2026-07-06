@@ -13,7 +13,7 @@
  *   npx dula-audio .
  *   npx dula-audio . --provider=elevenlabs
  */
-import { spawn } from 'child_process';
+import { spawn, spawnSync } from 'child_process';
 import path from 'path';
 import { fileURLToPath } from 'url';
 
@@ -61,6 +61,19 @@ if (provider === 'elevenlabs') {
     console.log('[dula-audio] ELEVENLABS_API_KEY not set. Will fallback to edge-tts.');
     console.log('[dula-audio] To use ElevenLabs, get a free key from https://elevenlabs.io/');
   }
+}
+
+// Export Combat:Action SFX events so the Python mixer can include them.
+const exportPath = path.resolve(__dirname, '..', 'tools', 'export_combat_sfx.js');
+console.log('[dula-audio] Exporting combat SFX events...');
+const exportResult = spawnSync('node', [exportPath, EPISODE], { stdio: 'inherit' });
+if (exportResult.error) {
+  console.error('[dula-audio] Failed to export combat SFX:', exportResult.error.message);
+  process.exit(1);
+}
+if (exportResult.status !== 0) {
+  console.error(`[dula-audio] Combat SFX export exited with code ${exportResult.status}`);
+  process.exit(exportResult.status ?? 1);
 }
 
 const proc = spawn(pythonCmd, [pyPath, EPISODE], { stdio: 'inherit' });

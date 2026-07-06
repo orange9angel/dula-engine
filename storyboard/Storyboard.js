@@ -12,6 +12,7 @@ import { MusicDirector, MusicCue } from '../lib/MusicDirector.js';
 import { HitstopManager } from '../lib/HitstopManager.js';
 import { generateMouthCue } from '../lib/AudioMouthCue.js';
 import { faceAnimationForEmotion } from '../lib/FaceEmotionMap.js';
+import { expandCombatAction } from '../lib/CombatActionRegistry.js';
 
 
 const DEFAULT_TRANSITIONS = {
@@ -62,6 +63,8 @@ export class Storyboard {
     this.cinematicAdapter = null;
     this.sceneDirector = null;
     this.timeScaleEvents = []; // { startTime, endTime, scale }
+    this.combatActionSFX = []; // { time, name } 由 Combat:Action 组件声明的可选 JS 音效
+    this.combatActionFX = []; // { time, type, target, duration, color } 由 Combat:Action 组件声明的光效
   }
 
   _queueHurdleRun(char, ev) {
@@ -481,6 +484,7 @@ export class Storyboard {
       'WeaveStep', 'HurricaneKick', 'DragonPunch', 'BackFist', 'SweepKick', 'KneeStrike',
       'CrouchJump',
       'SpiritSwordSwing', 'SpiritGunFire', 'SpiritGunCharge', 'SpiritSwordDraw',
+      'PlasmaRifle', 'PlasmaRifleCharge',
       'JumpAttack', 'DashForward', 'Dodge', 'BoxerGuardHop', 'Block', 'HitStagger',
       'Knockdown', 'GetUp', 'PointForward', 'CrossArms', 'Nod',
       'Shrug', 'LookAround', 'Celebrate', 'WaveHand', 'TurnToCamera',
@@ -1849,6 +1853,12 @@ export class Storyboard {
       this.combatDirector.update(t);
     }
 
+    // Combat:Action 组件声明的可选 JS 音效触发（仅浏览器预览层）
+    this._triggerCombatActionSFX(t);
+
+    // Combat:Action 组件声明的光效触发
+    this._triggerCombatActionFX(t);
+
     // SceneDirector: update formations and character facing
     if (this.sceneDirector) {
       this.sceneDirector.update(t);
@@ -2055,6 +2065,166 @@ export class Storyboard {
   }
 
   /**
+   * 记录 Combat:Action 组件里声明的 sfx，用于运行时可选 JS 音效触发。
+   * 支持 move.sfx 为归一化后的数组（每个元素含 name/trigger/volume/offset/pitch）。
+   */
+  _registerCombatActionSFX(startTime, moves) {
+    if (!this.combatActionSFX) this.combatActionSFX = [];
+    let animStart = startTime;
+    for (const m of moves) {
+      const AnimClass = AnimationRegistry[m.anim];
+      const inst = AnimClass ? new AnimClass() : null;
+      const animDuration = inst ? inst.duration : 0.5;
+      const sfxList = Array.isArray(m.sfx) ? m.sfx : [];
+      for (const sfx of sfxList) {
+        let triggerTime = animStart;
+        if (sfx.trigger === 'hitFrame' && m.hitFrame !== null && m.hitFrame !== undefined) {
+          triggerTime = animStart + m.hitFrame;
+        } else if (sfx.trigger === 'end') {
+          triggerTime = animStart + animDuration;
+        } else if (typeof sfx.trigger === 'number') {
+          triggerTime = animStart + sfx.trigger;
+        }
+        this.combatActionSFX.push({
+          time: triggerTime + (sfx.offset || 0),
+          name: sfx.name,
+          volume: sfx.volume !== undefined ? sfx.volume : 1.0,
+          pitch: sfx.pitch !== undefined ? sfx.pitch : 1.0,
+          triggered: false,
+        });
+      }
+      animStart += animDuration;
+    }
+  }
+
+  /**
+   * 记录 Combat:Action 组件里声明的 fx，供场景在触发时播放对应光效动画。
+   * 支持 move.fx 为归一化后的数组（每个元素含 type/trigger/attach/duration/color/offset）。
+   */
+  _registerCombatActionFX(startTime, moves, attackerName, defenderName) {
+    if (!this.combatActionFX) this.combatActionFX = [];
+    let animStart = startTime;
+    for (const m of moves) {
+      const AnimClass = AnimationRegistry[m.anim];
+      const inst = AnimClass ? new AnimClass() : null;
+      const animDuration = inst ? inst.duration : 0.5;
+      const fxList = Array.isArray(m.fx) ? m.fx : [];
+      for (const fx of fxList) {
+        let triggerTime = animStart;
+        if (fx.trigger === 'hitFrame' && m.hitFrame !== null && m.hitFrame !== undefined) {
+          triggerTime = animStart + m.hitFrame;
+        } else if (fx.trigger === 'end') {
+          triggerTime = animStart + animDuration;
+        } else if (typeof fx.trigger === 'number') {
+          triggerTime = animStart + fx.trigger;
+        }
+        const targetName = fx.attach === 'defender' ? defenderName : attackerName;
+        this.combatActionFX.push({
+          time: triggerTime + (fx.offset || 0),
+          type: fx.type,
+          target: targetName,
+          duration: fx.duration,
+          color: fx.color,
+          triggered: false,
+        });
+      }
+      animStart += animDuration;
+    }
+  }
+
+  /**
+   * 在浏览器预览/验证时，用 Web Audio 合成一段简短的组件音效。
+   * 最终混音仍以 .story 里的 {SFX:Play} 为准；这里只是让 preview 更有反馈。
+   */
+  _triggerCombatActionSFX(time) {
+    if (!this.combatActionSFX || !this.audioContext) return;
+    for (const ev of this.combatActionSFX) {
+      if (ev.triggered) continue;
+      if (time >= ev.time && time < ev.time + 0.05) {
+        ev.triggered = true;
+        this._synthComponentSFX(ev.name, ev.time, ev.volume, ev.pitch);
+      }
+    }
+  }
+
+  /**
+   * 在浏览器预览/验证时，触发 Combat:Action 组件声明的光效动画。
+   */
+  _triggerCombatActionFX(time) {
+    if (!this.combatActionFX) return;
+    for (const ev of this.combatActionFX) {
+      if (ev.triggered) continue;
+      if (time >= ev.time && time < ev.time + 0.05) {
+        ev.triggered = true;
+        const char = this.characters.get(ev.target);
+        if (!char) continue;
+        const AnimClass = AnimationRegistry[ev.type];
+        if (!AnimClass) {
+          console.warn(`[Storyboard] Combat FX "${ev.type}" not found in AnimationRegistry.`);
+          continue;
+        }
+        const options = {};
+        if (ev.color !== undefined && ev.color !== null) options.color = ev.color;
+        const duration = ev.duration !== undefined && ev.duration !== null ? ev.duration : undefined;
+        char.playAnimation(AnimClass, ev.time, duration, options);
+      }
+    }
+  }
+
+  _synthComponentSFX(name, when, volume = 1.0, pitch = 1.0) {
+    try {
+      const ctx = this.audioContext;
+      const t = Math.max(ctx.currentTime, when + (this.startTime || 0));
+      const gain = ctx.createGain();
+      gain.connect(this.audioDestination || ctx.destination);
+      // 根据不同音效类型做简单区分
+      const isEnergy = /laser|plasma|energy|blast|beam/i.test(name);
+      const isImpact = /impact|hit|punch|kick|thud|explosion/i.test(name);
+      const isWhoosh = /whoosh|dash|swing|slash/i.test(name);
+      if (isEnergy) {
+        const osc = ctx.createOscillator();
+        osc.type = 'sawtooth';
+        const baseFreq = 880 * pitch;
+        osc.frequency.setValueAtTime(baseFreq, t);
+        osc.frequency.exponentialRampToValueAtTime(baseFreq * 0.125, t + 0.12);
+        gain.gain.setValueAtTime(0.05 * volume, t);
+        gain.gain.exponentialRampToValueAtTime(0.001, t + 0.12);
+        osc.connect(gain);
+        osc.start(t);
+        osc.stop(t + 0.12);
+      } else if (isImpact) {
+        const noiseBuf = ctx.createBuffer(1, ctx.sampleRate * 0.1, ctx.sampleRate);
+        const data = noiseBuf.getChannelData(0);
+        for (let i = 0; i < data.length; i++) data[i] = (Math.random() * 2 - 1);
+        const src = ctx.createBufferSource();
+        src.buffer = noiseBuf;
+        src.playbackRate.value = pitch;
+        const filter = ctx.createBiquadFilter();
+        filter.type = 'lowpass';
+        filter.frequency.setValueAtTime(800 * pitch, t);
+        gain.gain.setValueAtTime(0.08 * volume, t);
+        gain.gain.exponentialRampToValueAtTime(0.001, t + 0.1);
+        src.connect(filter);
+        filter.connect(gain);
+        src.start(t);
+      } else if (isWhoosh) {
+        const osc = ctx.createOscillator();
+        osc.type = 'sine';
+        const baseFreq = 600 * pitch;
+        osc.frequency.setValueAtTime(baseFreq, t);
+        osc.frequency.exponentialRampToValueAtTime(baseFreq * 0.333, t + 0.15);
+        gain.gain.setValueAtTime(0.04 * volume, t);
+        gain.gain.exponentialRampToValueAtTime(0.001, t + 0.15);
+        osc.connect(gain);
+        osc.start(t);
+        osc.stop(t + 0.15);
+      }
+    } catch (e) {
+      // 浏览器音频可能被阻止，静默失败
+    }
+  }
+
+  /**
    * Initialize CombatDirector and process combat tags from .story entries.
    */
   _setupCombatDirector() {
@@ -2125,6 +2295,7 @@ export class Storyboard {
                   hitstop: options.hitstop,
                   shake: options.shake,
                   noStance: options.noStance,
+                  idleAction: options.idleAction,
                   noAutoCamera,
                 });
               } else {
@@ -2136,6 +2307,38 @@ export class Storyboard {
                   shake: options.shake,
                   noStance: options.noStance,
                 });
+              }
+            }
+            break;
+          }
+          case 'Action': {
+            // {Combat:Action|name=DashShot|attacker=雷恩|defender=Viper-1|offset=0.5|sfx=laser_blast|hitstop=0.02|shake=0.015|noAutoCamera=true|idleAction=HoldPlasmaRifle}
+            const attacker = options.attacker;
+            const defender = options.defender;
+            const actionName = options.name || options.action;
+            if (attacker && defender && actionName) {
+              const moves = expandCombatAction(actionName, {
+                sfx: options.sfx,
+                hitstop: options.hitstop,
+                shake: options.shake,
+                reaction: options.reaction,
+                camera: options.camera,
+              });
+              if (moves && moves.length > 0) {
+                const actionStart = startTime + (options.offset ?? 0);
+                const noAutoCamera = options.noAutoCamera === true || options.noAutoCamera === 'true';
+                const comboOptions = { noAutoCamera };
+                if (options.idleAction) comboOptions.idleAction = options.idleAction;
+                if (this.cinematicAdapter) {
+                  this.cinematicAdapter.scheduleCombo(attacker, defender, moves, actionStart, comboOptions);
+                } else {
+                  this.combatDirector.scheduleCombo(attacker, defender, moves, actionStart, comboOptions);
+                }
+                // 记录组件里声明的 sfx/fx，供运行时音效/光效反馈使用
+                this._registerCombatActionSFX(actionStart, moves);
+                this._registerCombatActionFX(actionStart, moves, attacker, defender);
+              } else {
+                console.warn(`[Storyboard] Combat action "${actionName}" not found or empty.`);
               }
             }
             break;

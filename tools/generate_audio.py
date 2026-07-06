@@ -764,6 +764,42 @@ def generate_takecopter_spin(filepath, duration=2.0, sample_rate=48000):
     print(f"Generated SFX: {filepath}")
 
 
+def load_combat_sfx_events(manual_sfx):
+    """Load SFX events exported from Combat:Action components (combat_sfx.json)."""
+    combat_sfx_path = os.path.join(EPISODE, "assets", "audio", "combat_sfx.json")
+    if not os.path.exists(combat_sfx_path):
+        return []
+    try:
+        with open(combat_sfx_path, "r", encoding="utf-8") as f:
+            events = json.load(f)
+    except Exception as e:
+        print(f"[WARNING] Failed to load combat_sfx.json: {e}")
+        return []
+
+    scheduled = []
+    names_by_lower = {name.lower(): path for name, path in manual_sfx.items()}
+    for ev in events:
+        name = ev.get("name")
+        if not name:
+            continue
+        sfx_file = names_by_lower.get(name.lower())
+        if not sfx_file:
+            # Try substring match for more flexibility
+            for manual_name, manual_path in manual_sfx.items():
+                if name.lower() in manual_name.lower():
+                    sfx_file = manual_path
+                    break
+        if not sfx_file:
+            print(f"[WARNING] Combat SFX '{name}' not found in manual/procedural SFX.")
+            continue
+        scheduled.append({
+            "file": sfx_file,
+            "startTime": float(ev.get("time", 0)),
+            "volume": float(ev.get("volume", 1.0)),
+        })
+    return scheduled
+
+
 def discover_manual_sfx():
     """Scan materials/sfx/, materials/audio/, assets/audio/sfx/, and assets/audio/music/ for sound effects."""
     sfx_dirs = [
@@ -1226,6 +1262,11 @@ def mix_audio(manifest, bgm_path=None, sfx_events=None):
     if dialogue_path:
         final_inputs.append(dialogue_path)
         final_filters.append(f"[{stream_idx}:a]volume={dialogue_vol}[dialogue{stream_idx}]")
+        # sidechaincompress stops when its detector stream ends. Pad only the
+        # detector key so music and the final fade can continue after the last
+        # spoken syllable; the audible dialogue stream itself stays unchanged.
+        if use_ducking and bgm_path:
+            final_filters.append(f"[{stream_idx}:a]apad=pad_dur=12[duckkey{stream_idx}]")
         stream_idx += 1
 
     if bgm_path:
@@ -1233,7 +1274,7 @@ def mix_audio(manifest, bgm_path=None, sfx_events=None):
         if use_ducking and dialogue_path:
             # Sidechain ducking: BGM is reduced when dialogue is present
             # sidechaincompress needs 2 inputs: [main][sidechain]
-            final_filters.append(f"[{stream_idx}:a][0:a]sidechaincompress=threshold=0.02:ratio=4:attack=50:release=300:level_in=1.0:mix={duck_depth}[bgm{stream_idx}]")
+            final_filters.append(f"[{stream_idx}:a][duckkey0]sidechaincompress=threshold=0.02:ratio=4:attack=50:release=300:level_in=1.0:mix={duck_depth}[bgm{stream_idx}]")
         else:
             final_filters.append(f"[{stream_idx}:a]volume={bgm_vol}[bgm{stream_idx}]")
         stream_idx += 1
@@ -1510,6 +1551,14 @@ async def generate(force_tts=False):
     # Add auto-scheduled manual SFX
     if scheduled_sfx:
         all_sfx_events.extend(scheduled_sfx)
+
+    # Add Combat:Action exported SFX events
+    combat_sfx_events = load_combat_sfx_events(manual_sfx)
+    if combat_sfx_events:
+        print(f"\n[Combat SFX] Scheduled {len(combat_sfx_events)} event(s):")
+        for s in combat_sfx_events:
+            print(f"  - {os.path.basename(s['file'])} @ {s['startTime']:.2f}s (vol={s['volume']})")
+        all_sfx_events.extend(combat_sfx_events)
 
     # Add procedural tennis hit (only if tennis-related choreography exists)
     if tennis_hit_times:

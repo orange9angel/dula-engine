@@ -627,6 +627,7 @@ export class CharacterBase {
 
   animateBody(time, delta) {
     if (!this.headGroup) return;
+    if (this.disableSpeakingBodyMotion) return;
     // 说话时给头部一个轻微节奏性点头/摆动，帮助观众定位说话者
     if (this.isSpeaking && time >= this.speakStartTime && time <= this.speakEndTime) {
       if (this.headBaseY === undefined) this.headBaseY = this.headGroup.position.y;
@@ -893,6 +894,7 @@ export class CharacterBase {
    */
   _applyConversationMicroMotion(time, delta) {
     if (!this.headGroup || !this.eyeTracking.active) return;
+    if (this.disableConversationMicroMotion) return;
     if (time < this.eyeTracking.startTime || time > this.eyeTracking.endTime) return;
 
     const speakingAmp = this.isSpeaking ? 1.4 : 1.0;

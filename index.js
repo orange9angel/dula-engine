@@ -30,6 +30,15 @@ export { VoiceBase, VoiceRegistry, registerVoice } from './voices/index.js';
 // Director registry (for CourtDirector and other domain directors)
 export { DirectorRegistry, registerDirector } from './lib/DirectorRegistry.js';
 
+// Combat action component registry
+export {
+  CombatActionRegistry,
+  registerCombatAction,
+  getCombatAction,
+  expandCombatAction,
+  listCombatActions,
+} from './lib/CombatActionRegistry.js';
+
 // Projectile system
 export { ProjectileBase } from './lib/ProjectileBase.js';
 export { ProjectileSystem } from './lib/ProjectileSystem.js';

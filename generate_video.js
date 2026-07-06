@@ -270,7 +270,8 @@ server.listen(PORT, async () => {
   }
   console.log(`Rendering: ${renderUrl}`);
   await page.goto(renderUrl, {
-    waitUntil: 'networkidle2',
+    waitUntil: 'load',
+    timeout: 120000,
   });
 
   // Wait for render completion

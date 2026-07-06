@@ -54,3 +54,19 @@ window.captureAtTime = async (time) => {
   lastCaptureTime = time;
   return renderer.domElement.toDataURL('image/jpeg', 0.92);
 };
+
+/**
+ * Export Combat:Action SFX events for the Python audio pipeline.
+ * Returns a JSON-serializable array of { time, name, volume, pitch }.
+ */
+window.exportCombatSFX = () => {
+  const list = (storyboard.combatActionSFX || [])
+    .filter((ev) => ev.name)
+    .map((ev) => ({
+      time: ev.time,
+      name: ev.name,
+      volume: ev.volume !== undefined ? ev.volume : 1.0,
+      pitch: ev.pitch !== undefined ? ev.pitch : 1.0,
+    }));
+  return list;
+};
