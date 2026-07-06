@@ -59,6 +59,9 @@ export class CharacterBase {
     this.particleEmitters = {}; // particle systems for trail / burst effects
     // Reusable light effect components (GlowEffect, AuraEffect, etc.)
     this.lightEffects = {};     // { name: effectInstance }
+    // ── Weapon system ──
+    this.weaponMesh = null;     // current weapon 3D mesh
+    this.weaponState = 'none';  // none | equipped | firing
     this.baseY = 0.12;
     this.isSpeaking = false;
     this.speakStartTime = 0;
@@ -307,6 +310,7 @@ export class CharacterBase {
     if (this._actionMatrix) {
       this._actionMatrix.clearAnimations();
     }
+    this.hideWeapon();
   }
 
   update(time, delta) {
@@ -771,6 +775,47 @@ export class CharacterBase {
     }
   }
 
+  // ── Weapon system ──
+  /**
+   * Show/equip a weapon mesh and attach it to a hand joint.
+   * @param {THREE.Object3D} mesh — weapon 3D model
+   * @param {string} attachPoint — 'rightHand' | 'leftHand' | 'rightShoulder' | 'leftShoulder' | 'back'
+   */
+  showWeapon(mesh, attachPoint = 'rightHand') {
+    this.hideWeapon();
+    this.weaponMesh = mesh;
+    const attachMap = {
+      rightHand: this.rightWrist,
+      leftHand: this.leftWrist,
+      rightShoulder: this.rightArm,
+      leftShoulder: this.leftArm,
+      back: this.mesh,
+    };
+    const parent = attachMap[attachPoint] || this.rightWrist;
+    if (parent) {
+      parent.add(mesh);
+    }
+    this.weaponState = 'equipped';
+  }
+
+  /**
+   * Hide/unequip the current weapon.
+   */
+  hideWeapon() {
+    if (this.weaponMesh) {
+      if (this.weaponMesh.parent) this.weaponMesh.parent.remove(this.weaponMesh);
+      this.weaponMesh = null;
+    }
+    this.weaponState = 'none';
+  }
+
+  /**
+   * Set weapon visibility without removing it.
+   */
+  setWeaponVisible(visible) {
+    if (this.weaponMesh) this.weaponMesh.visible = visible;
+  }
+
   /**
    * Capture base positions/rotations/scales for all facial features
    * so that expression animations can modify them deterministically
@@ -1042,5 +1087,6 @@ export class CharacterBase {
     }
     this.lightEffects = {};
     this.removeJointMarkers();
+    this.hideWeapon();
   }
 }
