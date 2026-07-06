@@ -11,6 +11,7 @@ import { PostProcessRegistry } from '../postprocessing/index.js';
 import { MusicDirector, MusicCue } from '../lib/MusicDirector.js';
 import { HitstopManager } from '../lib/HitstopManager.js';
 import { generateMouthCue } from '../lib/AudioMouthCue.js';
+import { EXAGGERATION_PRESETS } from '../lib/ExaggerationRegistry.js';
 import { ToneDirector } from '../lib/ToneDirector.js';
 import { ToneSSML } from '../lib/ToneSSML.js';
 import { EMOTION_PRESETS } from '../lib/FacialAnimationSystem.js';
@@ -2323,7 +2324,8 @@ export class Storyboard {
         pending.triggered = true;
         const { ex, char } = pending;
         console.log(`[ExaggerationSystem] Triggering ${ex.name} at t=${currentTime.toFixed(2)}`);
-        if (ex.name.includes('_')) {
+        // 检查是否是预设组合（只在 EXAGGERATION_PRESETS 中存在的才算）
+        if (EXAGGERATION_PRESETS[ex.name]) {
           char.exaggerationSystem.triggerPreset(ex.name, ex.options || ex);
         } else {
           char.exaggerationSystem.trigger(ex.name, ex.options || ex);
