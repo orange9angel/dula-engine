@@ -4,6 +4,7 @@ import { RigAdapter } from '../rigging/RigAdapter.js';
 import { FacialAnimationSystem } from '../lib/FacialAnimationSystem.js';
 import { applyMouthCueToShape, sampleMouthCue } from '../lib/AudioMouthCue.js';
 import { ExaggerationSystem } from '../lib/ExaggerationSystem.js';
+import { WeaponComponent } from '../lib/WeaponComponent.js';
 
 /**
  * Character archetype tags for animation compatibility.
@@ -578,9 +579,9 @@ export class CharacterBase {
   _updateVisemeSequence(time) {
     if (!this.visemeSequence || this.visemeSequence.length === 0) return;
     const elapsed = time - this.speakStartTime;
-    const { shape, weight } = sampleMouthCue(this.visemeSequence, elapsed);
+    const { jawOpen, energy } = sampleMouthCue(this.visemeSequence, elapsed);
     if (this.facialSystem) {
-      this.facialSystem.setViseme(shape, weight);
+      this.facialSystem.setViseme('rest', jawOpen || energy || 0);
     }
   }
 
