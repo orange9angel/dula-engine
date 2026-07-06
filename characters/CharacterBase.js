@@ -108,6 +108,9 @@ export class CharacterBase {
     // ── Facial Animation System ──
     // 统一调度 viseme / emotion / blink / eyeTracking，解决 TTS 与表情冲突
     this.facialSystem = new FacialAnimationSystem(this);
+
+    // ── Exaggeration System (卡通/漫画夸张效果) ──
+    this.exaggerationSystem = new ExaggerationSystem(this);
     /**
      * Archetype tags describing this character's body type and capabilities.
      * Used by animations to check compatibility.
@@ -324,9 +327,6 @@ export class CharacterBase {
   }
 
   update(time, delta) {
-    // ── Exaggeration System (卡通/漫画夸张效果) ──
-    this.exaggerationSystem = new ExaggerationSystem(this);
-
     // ── Facial Animation System (统一调度 viseme / emotion / blink / eyeTracking) ──
     if (this.facialSystem) {
       this.facialSystem.update(time, delta);
