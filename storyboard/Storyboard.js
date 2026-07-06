@@ -562,6 +562,32 @@ export class Storyboard {
           char.facialSystem.setEmotion(emotion, EMOTION_PRESETS[emotion]);
         }
       }
+
+      // 4. ── NEW: 根据语气自动播放肢体动作 ──
+      if (toneResult.bodyGesture?.anim) {
+        const gesture = toneResult.bodyGesture;
+        // 检查是否已有显式身体动画（Face 开头的不算）
+        const hasBodyAnim = (entry.animations || []).some(name => {
+          if (typeof name !== 'string') return false;
+          // 排除纯表情动画和 FX
+          return !name.startsWith('Face') && !name.startsWith('FX');
+        });
+        if (!hasBodyAnim) {
+          const AnimClass = AnimationRegistry[gesture.anim];
+          if (AnimClass) {
+            const entryDuration = entry.endTime - entry.startTime;
+            // 激烈动画缩短播放时间，避免和台词长度不匹配
+            const animDuration = gesture.intensity > 0.7
+              ? Math.min(entryDuration, 0.8)
+              : entryDuration;
+            char.playAnimation(AnimClass, entry.startTime, animDuration, {
+              intensity: gesture.intensity,
+              layer: gesture.layer,
+            });
+            console.log(`[ToneDirector] Auto gesture: ${entry.character} -> ${gesture.anim} (tone=${toneResult.toneId})`);
+          }
+        }
+      }
     }
 
     // Queue camera moves from SRT entries
