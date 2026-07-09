@@ -542,9 +542,18 @@ export class Storyboard {
 
       // 1. 分析语气
       const sceneCursor = entry.scene || this.currentSceneName || 'neutral';
+      // 把 {Voice:xxx} 情绪名映射到 ToneDirector 的 tone id
+      const VOICE_TO_TONE_ID = {
+        calm: 'neutral',
+        worried: 'fear',
+        angry: 'angry',
+        excited: 'joyful',
+        sad: 'sad',
+      };
+      const explicitTone = entry.tone || VOICE_TO_TONE_ID[entry.voiceEmotion] || entry.voiceEmotion;
       const toneResult = this.toneDirector.analyze(entry.dialogue, {
         scene: sceneCursor,
-        explicitTone: entry.tone,
+        explicitTone,
         precedingAction: entry.precedingAction,
         characterState: entry.characterState,
       });
@@ -574,7 +583,9 @@ export class Storyboard {
           return !name.startsWith('Face') && !name.startsWith('FX');
         });
         if (!hasBodyAnim) {
-          const AnimClass = AnimationRegistry[gesture.anim];
+          // 选择角色支持的动画；主选动画不兼容时按 tone 找 fallback
+          const chosenAnim = this._chooseCompatibleBodyGesture(char, gesture, toneResult);
+          const AnimClass = chosenAnim && AnimationRegistry[chosenAnim];
           if (AnimClass) {
             const entryDuration = entry.endTime - entry.startTime;
             // 激烈动画缩短播放时间，避免和台词长度不匹配
@@ -585,15 +596,17 @@ export class Storyboard {
               intensity: gesture.intensity,
               layer: gesture.layer,
             });
-            console.log(`[ToneDirector] Auto gesture: ${entry.character} -> ${gesture.anim} (tone=${toneResult.toneId})`);
+            console.log(`[ToneDirector] Auto gesture: ${entry.character} -> ${chosenAnim} (tone=${toneResult.toneId})`);
           }
         }
       }
 
       // 5. ── NEW: 根据语气和场景风格自动触发夸张效果 ──
-      if (char.exaggerationSystem) {
+      // 不再在 setup 阶段立即触发，而是按台词开始时间排期，
+      // 避免所有效果在 t=0 时一起泄漏到画面上。
+      if (char.exaggerationSystem && toneResult?.tone?.exaggeration?.length > 0) {
         char.exaggerationSystem.setSceneStyle(sceneCursor);
-        char.exaggerationSystem.autoTriggerFromTone(toneResult);
+        this._scheduleToneExaggerations(char, toneResult, entry.startTime);
       }
     }
 
@@ -2332,6 +2345,89 @@ export class Storyboard {
         }
       }
     }
+  }
+
+  /**
+   * 把 ToneDirector 推断出的夸张效果按台词开始时间排期，
+   * 避免在 setup 阶段就全部触发。
+   */
+  _scheduleToneExaggerations(character, toneResult, startTime) {
+    if (!this._pendingExaggerations) this._pendingExaggerations = [];
+    const intensity = (toneResult.intensity ?? 0.8) * 0.8;
+    for (const exName of toneResult.tone.exaggeration) {
+      this._pendingExaggerations.push({
+        char: character,
+        ex: { name: exName, options: { intensity } },
+        startTime,
+        triggered: false,
+      });
+    }
+  }
+
+  /**
+   * 为 ToneDirector 自动肢体动作选择角色支持的动画。
+   * 如果首选动画不在 allowedBodyAnimations 中，则按 tone 情绪找同组 fallback。
+   */
+  _chooseCompatibleBodyGesture(character, gesture, toneResult) {
+    const preferred = gesture.anim;
+    if (character.canPlayAnimationName && character.canPlayAnimationName(preferred)) {
+      return preferred;
+    }
+
+    // 角色能力列表；未设置 allowedBodyAnimations 时默认全部允许
+    const allowed = character.allowedBodyAnimations;
+    const isAllowed = (name) => !allowed || allowed.has(name);
+
+    // 按 tone 情绪分组 fallback 候选
+    const fallbackMap = {
+      battle_cry:    ['FistPump', 'PointForward', 'DashForward', 'CrossArms'],
+      pain_shout:    ['HitStagger', 'Crouch', 'Block'],
+      pain_grunt:    ['Crouch', 'Block', 'HitStagger'],
+      victory_laugh: ['Celebrate', 'Jump', 'WaveHand'],
+      taunt:         ['PointForward', 'CrossArms', 'DashForward'],
+      happy:         ['WaveHand', 'Jump', 'Celebrate'],
+      joyful:        ['Celebrate', 'Jump', 'WaveHand'],
+      laugh:         ['Shrug', 'WaveHand', 'Celebrate'],
+      angry:         ['CrossArms', 'FistPump', 'PointForward'],
+      furious:       ['FistPump', 'DashForward', 'CrossArms'],
+      fear:          ['Tremble', 'Crouch', 'Dodge', 'Block'],
+      panic:         ['FlailArms', 'Dodge', 'Crouch'],
+      surprise:      ['LookAround', 'HitStagger'],
+      shock:         ['HitStagger', 'Crouch'],
+      despair:       ['Crouch', 'Tremble'],
+      plead:         ['PointForward', 'CrossArms'],
+      command:       ['PointForward', 'CrossArms'],
+      mock:          ['Shrug', 'CrossArms'],
+      disgust:       ['Shrug', 'CrossArms'],
+      contempt:      ['CrossArms', 'Shrug'],
+      monologue:     ['CrossArms', 'Nod'],
+      whisper:       [null],
+      breath:        [null],
+      neutral:       [null],
+      narration:     [null],
+      sad:           ['Crouch', 'Tremble'],
+      sobbing:       ['Crouch', 'Tremble'],
+      gasp:          ['HitStagger', 'LookAround'],
+      respectful:    ['Nod', 'CrossArms'],
+    };
+
+    const candidates = fallbackMap[toneResult.toneId] || [preferred];
+    for (const name of candidates) {
+      if (!name) continue;
+      if (isAllowed(name) && AnimationRegistry[name]) {
+        return name;
+      }
+    }
+
+    // 最后尝试从角色允许列表里找一个通用情绪动画
+    const genericPool = ['CrossArms', 'PointForward', 'Nod', 'LookAround', 'ShakeHead'];
+    for (const name of genericPool) {
+      if (isAllowed(name) && AnimationRegistry[name]) {
+        return name;
+      }
+    }
+
+    return null;
   }
 
   _setupCombatDirector() {

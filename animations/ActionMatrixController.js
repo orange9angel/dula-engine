@@ -585,16 +585,20 @@ export class ActionMatrixController {
       idlePose.leftKnee = { rx: Math.abs(Math.sin(t * 0.55 + 0.4 + Math.PI)) * 0.025 };
     }
 
-    // Reset facial features to base state (prevent mouth/eyebrow drift)
-    idlePose.mouth = { sx: 0, sy: 0, sz: 0, px: 0, py: 0, pz: 0, rx: 0, ry: 0, rz: 0 };
-    idlePose.eyebrows = {
-      left: { py: 0, pz: 0, rz: 0 },
-      right: { py: 0, pz: 0, rz: 0 },
-    };
-    idlePose.eyelids = {
-      left: { visible: false, sy: 0 },
-      right: { visible: false, sy: 0 },
-    };
+    // Reset facial features to base state ONLY if no facialSystem is present.
+    // When facialSystem exists, it manages expressions/visemes/blinks independently.
+    // Clearing the pose face channels here would wipe ToneDirector emotions and mouth animation.
+    if (!this.character.facialSystem) {
+      idlePose.mouth = { sx: 0, sy: 0, sz: 0, px: 0, py: 0, pz: 0, rx: 0, ry: 0, rz: 0 };
+      idlePose.eyebrows = {
+        left: { py: 0, pz: 0, rz: 0 },
+        right: { py: 0, pz: 0, rz: 0 },
+      };
+      idlePose.eyelids = {
+        left: { visible: false, sy: 0 },
+        right: { visible: false, sy: 0 },
+      };
+    }
 
     this._applyPose(idlePose);
     // 应用关节约束（SceneBase.update 中会统一传入其他角色做角色间碰撞，这里做无其他角色时的兜底）

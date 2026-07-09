@@ -558,9 +558,22 @@ export class CharacterBase {
         );
       }
     } else {
-      // Fallback to sine wave when no viseme data
-      const factor = Math.abs(Math.sin(time * 12));
-      shape = { lipHeight: 0.4 + 0.2 * factor, lipWidth: 1.0, jawOpen: 0.2 * factor };
+      // Fallback mouth motion when no viseme data is available (e.g. headless render).
+      // Use a sharper, syllable-like pulse so lips clearly open/close during speech.
+      const elapsed = time - this.speakStartTime;
+      const duration = this.speakEndTime - this.speakStartTime;
+      const progress = duration > 0 ? elapsed / duration : 0;
+      // Multi-frequency oscillation for more natural speech-like movement
+      const syllable = Math.abs(Math.sin(elapsed * 11) * Math.cos(elapsed * 4.2) * Math.sin(elapsed * 7.3 + 1));
+      const factor = Math.pow(syllable, 0.65);
+      // Add some randomness to simulate different syllable lengths
+      const noise = Math.sin(elapsed * 19) * 0.08;
+      shape = {
+        lipHeight: 0.25 + 0.5 * factor + noise,
+        lipWidth: 1.0 + 0.2 * factor,
+        jawOpen: 0.4 * factor + 0.1,
+        energy: 0.4 * factor,
+      };
     }
 
     const cueSample = this.mouthCue ? sampleMouthCue(this.mouthCue, time - this.speakStartTime) : null;
@@ -578,10 +591,52 @@ export class CharacterBase {
 
   _updateVisemeSequence(time) {
     if (!this.visemeSequence || this.visemeSequence.length === 0) return;
-    const elapsed = time - this.speakStartTime;
-    const { jawOpen, energy } = sampleMouthCue(this.visemeSequence, elapsed);
+
+    // Use VisemeMapper to get the proper mouth shape from the text-based sequence
+    let shape = null;
+    let activeViseme = 'rest';
+    if (typeof window !== 'undefined' && window.VisemeMapper) {
+      if (window.VisemeMapper.getMouthShapeFromSequence) {
+        shape = window.VisemeMapper.getMouthShapeFromSequence(this.visemeSequence, time);
+      }
+      if (window.VisemeMapper.getVisemeAtTime) {
+        const visemeInfo = window.VisemeMapper.getVisemeAtTime(this.visemeSequence, time - this.speakStartTime);
+        if (visemeInfo && visemeInfo.viseme) {
+          activeViseme = visemeInfo.viseme.toLowerCase();
+        }
+      }
+    }
+
+    // Fallback: direct sequence lookup
+    if (!shape) {
+      const elapsed = time - this.speakStartTime;
+      for (const seg of this.visemeSequence) {
+        if (elapsed >= seg.startTime && elapsed < seg.endTime) {
+          activeViseme = (seg.viseme || 'rest').toLowerCase();
+          break;
+        }
+      }
+    }
+
+    // Map viseme names to FacialAnimationSystem viseme IDs
+    const visemeMap = {
+      'a': 'aaa', 'i': 'eee', 'u': 'ooo', 'e': 'eee', 'o': 'ooo',
+      'closed': 'mmm', 'rest': 'rest',
+    };
+    const fsViseme = visemeMap[activeViseme] || activeViseme;
+
+    // Calculate jaw openness from shape or default
+    let jawOpen = 0;
+    if (shape) {
+      jawOpen = shape.jawOpen || shape.lipHeight || 0;
+    } else {
+      // Simple pulse when no shape data
+      const elapsed = time - this.speakStartTime;
+      jawOpen = 0.3 + Math.abs(Math.sin(elapsed * 12)) * 0.4;
+    }
+
     if (this.facialSystem) {
-      this.facialSystem.setViseme('rest', jawOpen || energy || 0);
+      this.facialSystem.setViseme(fsViseme, Math.min(1, jawOpen));
     }
   }
 
