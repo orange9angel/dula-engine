@@ -1307,6 +1307,26 @@ def mix_audio(manifest, bgm_path=None, sfx_events=None):
     ])
     print("Mixing final audio into mixed.wav...")
     subprocess.run(cmd, check=True)
+
+    # Ensure mixed.wav covers the full story duration so video isn't truncated
+    # by a too-short dialogue/SFX track when ffmpeg uses -shortest.
+    target_duration = max((e["endTime"] for e in entries), default=0.0)
+    if target_duration > 0:
+        current_duration = get_mp3_duration(mixed_path)
+        if current_duration is not None and current_duration < target_duration:
+            pad_path = mixed_path + ".pad.wav"
+            subprocess.run(
+                [
+                    "ffmpeg", "-y", "-i", mixed_path,
+                    "-af", f"apad=pad_dur={target_duration - current_duration:.3f}",
+                    "-acodec", "pcm_s16le", "-ar", "48000",
+                    pad_path,
+                ],
+                check=True, capture_output=True,
+            )
+            os.replace(pad_path, mixed_path)
+            print(f"Padded mixed.wav from {current_duration:.2f}s to {target_duration:.2f}s")
+
     print(f"Mixed audio written to: {mixed_path}")
 
 

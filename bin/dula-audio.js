@@ -1,17 +1,19 @@
 #!/usr/bin/env node
 /**
  * Dula Audio CLI
- * Usage: dula-audio <episode-dir> [--provider=edge|elevenlabs|dashscope]
+ * Usage: dula-audio <episode-dir> [--provider=edge|elevenlabs|dashscope|f5-tts]
  *
  * Spawns the Python audio pipeline.
  * Providers:
  *   edge        - edge-tts (free, default)
  *   elevenlabs  - ElevenLabs TTS (free tier: 10k chars/month)
  *   dashscope   - Alibaba DashScope CosyVoice
+ *   f5-tts      - edge-tts + sox personality effects + F5-TTS voice cloning
  *
  * When installed via npm, this allows story projects to run:
  *   npx dula-audio .
  *   npx dula-audio . --provider=elevenlabs
+ *   npx dula-audio . --provider=f5-tts --device cpu
  */
 import { spawn, spawnSync } from 'child_process';
 import path from 'path';
@@ -22,11 +24,27 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url));
 // Parse arguments
 let EPISODE = '.';
 let provider = 'edge';
+const extraArgs = [];
 
 for (let i = 2; i < process.argv.length; i++) {
   const arg = process.argv[i];
   if (arg.startsWith('--provider=')) {
     provider = arg.slice('--provider='.length);
+  } else if (arg === '--provider') {
+    provider = process.argv[++i];
+  } else if (
+    arg === '--device' ||
+    arg === '--ref-strategy' ||
+    arg === '--ref-duration' ||
+    arg === '--character' ||
+    arg === '-c'
+  ) {
+    extraArgs.push(arg, process.argv[++i]);
+  } else if (
+    arg === '--use-sox' ||
+    arg === '--no-sox'
+  ) {
+    extraArgs.push(arg);
   } else if (!arg.startsWith('--')) {
     EPISODE = arg;
   }
@@ -37,12 +55,13 @@ const providerScripts = {
   edge: 'generate_audio.py',
   elevenlabs: 'generate_audio_elevenlabs.py',
   dashscope: 'generate_audio_dashscope.py',
+  'f5-tts': 'generate_audio_f5tts.py',
 };
 
 const scriptName = providerScripts[provider];
 if (!scriptName) {
   console.error(`[dula-audio] Unknown provider: ${provider}`);
-  console.error(`[dula-audio] Available: edge, elevenlabs, dashscope`);
+  console.error(`[dula-audio] Available: edge, elevenlabs, dashscope, f5-tts`);
   process.exit(1);
 }
 
@@ -76,7 +95,7 @@ if (exportResult.status !== 0) {
   process.exit(exportResult.status ?? 1);
 }
 
-const proc = spawn(pythonCmd, [pyPath, EPISODE], { stdio: 'inherit' });
+const proc = spawn(pythonCmd, [pyPath, EPISODE, ...extraArgs], { stdio: 'inherit' });
 
 proc.on('error', (err) => {
   console.error(`[dula-audio] Failed to spawn ${pythonCmd}:`, err.message);
