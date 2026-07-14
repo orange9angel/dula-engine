@@ -600,7 +600,8 @@ export class CharacterBase {
         shape = window.VisemeMapper.getMouthShapeFromSequence(this.visemeSequence, time);
       }
       if (window.VisemeMapper.getVisemeAtTime) {
-        const visemeInfo = window.VisemeMapper.getVisemeAtTime(this.visemeSequence, time - this.speakStartTime);
+        // visemeSequence 的 startTime/endTime 是绝对时间（已包含 speakStartTime 偏移）
+        const visemeInfo = window.VisemeMapper.getVisemeAtTime(this.visemeSequence, time);
         if (visemeInfo && visemeInfo.viseme) {
           activeViseme = visemeInfo.viseme.toLowerCase();
         }
