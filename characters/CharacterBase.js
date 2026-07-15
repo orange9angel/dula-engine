@@ -636,8 +636,20 @@ export class CharacterBase {
       jawOpen = 0.3 + Math.abs(Math.sin(elapsed * 12)) * 0.4;
     }
 
+    // Blend in audio-derived mouth cue so lip-sync matches actual speech energy.
+    // The text viseme picks the mouth shape direction; the audio cue scales the openness.
+    let audioJawOpen = null;
+    if (this.mouthCue) {
+      const cue = sampleMouthCue(this.mouthCue, time - this.speakStartTime);
+      if (cue && cue.jawOpen > 0) {
+        // Use audio cue as a multiplier on top of the viseme jawOpen
+        audioJawOpen = jawOpen * 0.35 + cue.jawOpen * 0.75;
+        jawOpen = Math.min(1.0, audioJawOpen);
+      }
+    }
+
     if (this.facialSystem) {
-      this.facialSystem.setViseme(fsViseme, Math.min(1, jawOpen));
+      this.facialSystem.setViseme(fsViseme, Math.min(1, jawOpen), { jawOpen });
     }
   }
 

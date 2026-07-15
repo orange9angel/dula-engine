@@ -294,6 +294,8 @@ export class Storyboard {
             type: po.name.toLowerCase(),
             character: po.options.character,
             color: po.options.color,
+            action: po.options.action || 'attach',
+            startTime: entry.startTime,
           });
         }
       }
@@ -462,7 +464,10 @@ export class Storyboard {
     // Position characters (only fills in missing positions/faces)
     this.arrangeCharacters();
 
-    // Apply story props AFTER characters are created and added to scene
+    // Apply story props AFTER characters are created and added to scene.
+    // hat/stonehat props are time-scheduled in update() so they appear/disappear
+    // at the story entry time; other props keep the legacy scene-setup behavior.
+    this._appliedProps = new Set();
     if (this.storyProps) {
       for (const p of this.storyProps) {
         const char = this.characters.get(p.character);
@@ -960,7 +965,7 @@ export class Storyboard {
       }
     }
 
-    // Generic prop handling (all scenes)
+    // Generic prop handling (all scenes). hat/stonehat are time-scheduled in update().
     if (this.storyProps) {
       for (const p of this.storyProps) {
         const char = this.characters.get(p.character);
@@ -1397,6 +1402,32 @@ export class Storyboard {
     }
   }
 
+  /**
+   * Apply time-scheduled story props (currently hat/stonehat attach/detach).
+   * Props are triggered once when their entry start time is reached.
+   */
+  _applyStoryPropsAtTime(t) {
+    if (!this.storyProps || !this._appliedProps) return;
+    for (let i = 0; i < this.storyProps.length; i++) {
+      const p = this.storyProps[i];
+      if (p.startTime !== undefined && p.startTime > t) continue;
+      if (this._appliedProps.has(i)) continue;
+
+      const char = this.characters.get(p.character);
+      if (!char) continue;
+
+      if ((p.type === 'hat' || p.type === 'stonehat') && char.attachStoneHat && char.detachStoneHat) {
+        const action = p.action || 'attach';
+        if (action === 'detach') {
+          char.detachStoneHat();
+        } else {
+          char.attachStoneHat();
+        }
+      }
+      this._appliedProps.add(i);
+    }
+  }
+
   play() {
     if (this.isPlaying) return;
     if (this.audioContext.state === 'suspended') {
@@ -1501,6 +1532,9 @@ export class Storyboard {
     // Apply per-entry {Position:...} placements at their scheduled times.
     // This is needed even when the scene does not change.
     this._applyStoryPlacementsAtTime(t);
+
+    // Apply time-scheduled story props (e.g. hat attach/detach).
+    this._applyStoryPropsAtTime(t);
 
     // Transition effects
     this._updateTransitions(t);

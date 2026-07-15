@@ -407,11 +407,15 @@ export class ActionMatrixController {
     if (pose.mouth && c.mouth) {
       const m = pose.mouth;
       const baseM = faceBase.mouth || {};
-      const scaleY = (baseM.sy || c.mouthBaseScaleY || 1) * (1 + (m.sy || 0));
-      const scaleX = (baseM.sx || c.mouthBaseScaleX || 1) * (1 + (m.sx || 0));
+      const baseSY = baseM.sy || c.mouthBaseScaleY || 1;
+      const baseSX = baseM.sx || c.mouthBaseScaleX || 1;
+      const scaleY = baseSY * (1 + (m.sy || 0));
+      const scaleX = baseSX * (1 + (m.sx || 0));
       emotion.tension = m.tension || 0;
       emotion.lipOffset = (m.py || 0) * 10;
-      emotion.lipWidth = (scaleX / (baseM.sx || 1)) - 1;
+      emotion.lipWidth = (scaleX / baseSX) - 1;
+      // sy 表示嘴部纵向开合（正值张嘴，负值抿嘴），映射到表情 jawOpen
+      emotion.jawOpen = Math.max(-0.5, Math.min(1.0, (scaleY / baseSY) - 1));
     }
 
     // ── 眉毛 ──

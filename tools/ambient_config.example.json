@@ -1,0 +1,11 @@
+{
+  "_comment": "Optional config for the semantic ambient analyzer. Place in episode/config/ambient_config.json",
+  "enabled": true,
+  "global_volume": 1.0,
+  "scene_profiles": {
+    "RoomScene": {"enabled": false},
+    "FrightZoneScene": {"volume": 0.20, "intensity": 0.70},
+    "NeonHighwayScene": {"type": "traffic", "volume": 0.15, "density": 0.50},
+    "CustomScene": {"type": "wind", "volume": 0.10, "intensity": 0.30}
+  }
+}

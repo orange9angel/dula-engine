@@ -98,6 +98,13 @@ REGISTRY = {
         "description": "雨声环境",
         "generator": generators.rain,
     },
+    "birds": {
+        "category": "nature",
+        "params": ["duration", "intensity", "density", "volume"],
+        "defaults": {"intensity": 0.35, "density": 0.25},
+        "description": "公园/树林鸟鸣环境音，density 控制每秒鸟叫密度",
+        "generator": generators.birds,
+    },
 
     # Mechanical
     "transform_mechanical": {

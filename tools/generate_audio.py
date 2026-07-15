@@ -203,6 +203,14 @@ except Exception as e:
     procedural_audio = None
     HAS_PROCEDURAL_AUDIO = False
 
+try:
+    import semantic_ambient
+    HAS_SEMANTIC_AMBIENT = True
+except Exception as e:
+    print(f"[WARNING] Semantic ambient analyzer unavailable: {e}")
+    semantic_ambient = None
+    HAS_SEMANTIC_AMBIENT = False
+
 # Resolve episode path from CLI argument
 EPISODE = sys.argv[1] if len(sys.argv) > 1 else "."
 if not os.path.isabs(EPISODE):
@@ -1378,6 +1386,23 @@ async def generate(force_tts=False):
         story_text = f.read()
 
     entries, music_cues, story_events = parse_story(story_text)
+
+    # Semantic ambient analysis: derive environmental ambience from scenes & dialogue.
+    ambient_events = []
+    if HAS_SEMANTIC_AMBIENT:
+        try:
+            ambient_events = semantic_ambient.analyze_story(EPISODE, story_text=story_text)
+            if ambient_events:
+                print(f"\n[SemanticAmbient] Generated {len(ambient_events)} ambient event(s):")
+                for ev in ambient_events:
+                    extra = ""
+                    for k in ("intensity", "density"):
+                        if k in ev:
+                            extra += f" {k}={ev[k]}"
+                    print(f"  - {ev['type']} @ {ev['start']:.2f}s-{ev['end']:.2f}s vol={ev['volume']}{extra}")
+        except Exception as e:
+            print(f"[WARNING] Semantic ambient analysis failed: {e}")
+
     voice_config = load_voice_config()
     tennis_hit_times = load_tennis_hit_times()
     
@@ -1686,12 +1711,41 @@ async def generate(force_tts=False):
                     except ValueError as e:
                         print(f"[ProceduralAudio] Skipping malformed tag '{body}': {e}")
 
+        # Merge explicit procedural SFX tags with semantic ambient events.
+        # Skip ambient events that overlap with explicit procedural tags of the same
+        # type to avoid doubling already-author-designed ambience.
+        if ambient_events and procedural_events:
+            filtered_ambient = []
+            for aev in ambient_events:
+                overlap = False
+                for pev in procedural_events:
+                    if aev["type"] != pev["type"]:
+                        continue
+                    # If the author already placed an explicit procedural tag of the
+                    # same type, trust it and skip the auto-generated ambient layer.
+                    a_start, a_end = aev["start"], aev["end"]
+                    p_start, p_end = pev["start"], pev["end"]
+                    inter = max(0.0, min(a_end, p_end) - max(a_start, p_start))
+                    if inter > 0:
+                        overlap = True
+                        break
+                if not overlap:
+                    filtered_ambient.append(aev)
+            ambient_events = filtered_ambient
+
+        procedural_events.extend(ambient_events)
+
         if procedural_events:
             max_time = max(e["endTime"] for e in entries) if entries else 70.0
+            max_time = max(max_time, max(e["end"] for e in procedural_events))
             procedural_sfx_path = os.path.join(OUTPUT_DIR, "_procedural_sfx.wav")
             print(f"\n[ProceduralAudio] Rendering {len(procedural_events)} event(s) -> {procedural_sfx_path}")
             for ev in procedural_events:
-                print(f"  - {ev['type']} @ {ev['start']:.2f}s-{ev['end']:.2f}s vol={ev['volume']}")
+                extra = ""
+                for k in ("intensity", "density"):
+                    if k in ev:
+                        extra += f" {k}={ev[k]}"
+                print(f"  - {ev['type']} @ {ev['start']:.2f}s-{ev['end']:.2f}s vol={ev['volume']}{extra}")
             procedural_audio.render(procedural_events, max_time + 1.0, procedural_sfx_path)
             all_sfx_events.append({
                 "file": procedural_sfx_path,
