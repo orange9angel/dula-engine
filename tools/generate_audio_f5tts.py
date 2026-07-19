@@ -59,6 +59,7 @@ def run_f5_voice(
     ref_strategy: str | None,
     ref_duration: float | None,
     character: str | None,
+    force: bool = False,
 ) -> None:
     """Call the f5-tts-voice skill to generate cloned dialogue MP3s."""
     cmd = [
@@ -78,6 +79,8 @@ def run_f5_voice(
         cmd.extend(["--ref-duration", str(ref_duration)])
     if character:
         cmd.extend(["--character", character])
+    if force:
+        cmd.append("--force")
 
     print("[f5-tts-provider] Running F5-TTS voice cloning...")
     print(f"[f5-tts-provider] {' '.join(cmd)}")
@@ -114,6 +117,7 @@ def main() -> None:
     parser.add_argument("--ref-strategy", default=None, help="Reference selection strategy")
     parser.add_argument("--ref-duration", type=float, default=None, help="Reference duration in seconds")
     parser.add_argument("--character", "-c", default=None, help="Only process this character")
+    parser.add_argument("--force", action="store_true", help="Regenerate cached F5 base and cloned dialogue")
     args = parser.parse_args()
 
     episode = Path(args.episode).resolve()
@@ -138,7 +142,10 @@ def main() -> None:
         ref_strategy=args.ref_strategy,
         ref_duration=args.ref_duration,
         character=args.character,
+        force=args.force,
     )
+    # Deliberately do not forward --force here: the standard mixer must reuse
+    # the freshly installed F5 MP3 files instead of overwriting them with edge-tts.
     run_mixer(episode)
     print("[f5-tts-provider] Done.")
 

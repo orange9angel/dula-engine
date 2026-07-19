@@ -431,17 +431,26 @@ export class ActionMatrixController {
     }
 
     // ── 眼皮 ──
+    // 表情动画用 sy < 0 表示闭眼/眯眼（scale.y 变小）。
     if (pose.eyelids) {
-      if (pose.eyelids.left && pose.eyelids.left.sy !== undefined) {
-        emotion.eyelidClosed = Math.max(0, Math.min(1, pose.eyelids.left.sy * 2));
+      const left = pose.eyelids.left || {};
+      const right = pose.eyelids.right || {};
+      if (left.sy !== undefined) {
+        emotion.eyelidClosedLeft = Math.max(0, Math.min(1, -left.sy * 2));
+        emotion.eyeSquintLeft = Math.max(0, -left.sy);
       }
-      emotion.eyeSquint = (pose.eyelids.left?.sy || 0) * 0.5;
+      if (right.sy !== undefined) {
+        emotion.eyelidClosedRight = Math.max(0, Math.min(1, -right.sy * 2));
+        emotion.eyeSquintRight = Math.max(0, -right.sy);
+      }
+      emotion.eyelidVisibleLeft = left.visible ?? false;
+      emotion.eyelidVisibleRight = right.visible ?? false;
     }
 
     // ── 瞳孔 ──
     if (pose.pupils) {
       if (pose.pupils.left && pose.pupils.left.sx !== undefined) {
-        emotion.pupilDilate = (pose.pupils.left.sx - 1) * 2;
+        emotion.pupilDilate = pose.pupils.left.sx * 2;
       }
     }
 

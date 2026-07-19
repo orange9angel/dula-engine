@@ -23,6 +23,34 @@ import re
 class SemanticAmbientAnalyzer:
     """Rule-based semantic analyzer that maps story content to ambient events."""
 
+    # Fields that control semantic layer selection but are not generator args.
+    LAYER_CONTROL_FIELDS = {
+        "enabled",
+        "layers",
+        "replace",
+        "mode",
+        "source",
+        "id",
+        "kind",
+        "semantic",
+        "loop",
+        "position",
+        "radius",
+    }
+
+    # Contract audio anchors describe intent rather than exact synthesis
+    # parameters. These defaults turn the two common looped indoor anchors
+    # into restrained procedural layers.
+    CONTRACT_LAYER_DEFAULTS = {
+        "room_tone": {"type": "room_tone", "volume": 0.075, "intensity": 0.28},
+        "clock_tick": {
+            "type": "clock_tick",
+            "volume": 0.055,
+            "intensity": 0.5,
+            "density": 1.0,
+        },
+    }
+
     # ───────────────────────────────────────────────────────────────────────
     # Scene -> default ambient profile
     # Profiles use procedural audio types from procedural_audio.registry.
@@ -166,15 +194,20 @@ class SemanticAmbientAnalyzer:
     # Public API
     # ───────────────────────────────────────────────────────────────────────
 
-    def __init__(self, config=None):
+    def __init__(self, config=None, scene_contract=None):
         """
         Args:
             config: dict from config/ambient_config.json (optional).
+            scene_contract: parsed config/scene_contract.json (optional).
         """
         self.config = config or {}
         self.enabled = self.config.get("enabled", True)
         self.global_volume = float(self.config.get("global_volume", 1.0))
         self.scene_overrides = self.config.get("scene_profiles", {})
+        self.scene_contract = scene_contract or {}
+        self.contract_scene_layers = self._contract_layers_by_scene(
+            self.scene_contract
+        )
 
     def analyze(self, story_text, total_duration=None):
         """
@@ -333,30 +366,37 @@ class SemanticAmbientAnalyzer:
 
         # Scene-level override / disable
         override = self.scene_overrides.get(scene, {})
+        if not isinstance(override, dict):
+            override = {}
         if override.get("enabled") is False:
             return []
 
-        profile = self.SCENE_PROFILES.get(scene)
-        # Fallback: infer from scene name keywords if not explicitly mapped.
-        if profile is None and not override:
-            scene_lower = scene.lower()
-            for keyword, heuristic in self.SCENE_NAME_HEURISTICS:
-                if keyword in scene_lower:
-                    profile = dict(heuristic)
-                    break
+        profile = self._default_profile_for_scene(scene, has_override=bool(override))
+        contract_layers = self.contract_scene_layers.get(scene, [])
 
-        if override.get("type") is not None:
-            profile = dict(override) if override.get("type") else None
-        elif profile is not None and override:
-            profile = {**profile, **override}
-
-        # Collect base layers
+        # Collect base layers. Explicit `layers` is the multi-layer replacement
+        # form; explicit legacy `type` remains a single-layer replacement.
         layers = {}
-        if profile:
-            base = dict(profile)
-            base["start"] = start
-            base["end"] = end
-            layers[base["type"]] = base
+        if "layers" in override:
+            configured_layers = self._coerce_config_layers(override.get("layers"))
+            for configured in configured_layers:
+                self._put_layer(layers, configured, start, end)
+        elif override.get("type") is not None:
+            self._put_layer(layers, override, start, end)
+        else:
+            if profile:
+                self._put_layer(layers, profile, start, end)
+            for contract_layer in contract_layers:
+                self._put_layer(layers, contract_layer, start, end)
+
+            # Backward-compatible scene-profile tweaks such as
+            # {"volume": 0.1, "intensity": 0.4}. With contract-derived
+            # multi-layer beds, apply the same tweak to every active layer.
+            if override:
+                tweaks = self._clean_layer(override, require_type=False)
+                if tweaks:
+                    for sound_type in list(layers):
+                        layers[sound_type].update(tweaks)
 
         # Apply keyword modifiers
         modifiers = self._collect_modifiers(dialogue)
@@ -391,7 +431,12 @@ class SemanticAmbientAnalyzer:
         # Apply global volume and clean up
         events = []
         for layer in layers.values():
-            layer["volume"] = round(layer.get("volume", 0.1) * self.global_volume, 4)
+            layer = self._clean_layer(layer)
+            if not layer:
+                continue
+            layer["volume"] = round(
+                float(layer.get("volume", 0.1)) * self.global_volume, 4
+            )
             # Remove redundant zero-volume layers
             if layer["volume"] <= 0.001:
                 continue
@@ -402,6 +447,155 @@ class SemanticAmbientAnalyzer:
             events.append(layer)
 
         return events
+
+    def _default_profile_for_scene(self, scene, has_override=False):
+        """Return a copy of the built-in or inferred single-layer profile."""
+        profile = self.SCENE_PROFILES.get(scene)
+        if profile is not None:
+            return dict(profile)
+
+        # Preserve the legacy behavior where any scene override suppresses
+        # name heuristics unless it explicitly supplies a type.
+        if has_override:
+            return None
+
+        scene_lower = scene.lower()
+        for keyword, heuristic in self.SCENE_NAME_HEURISTICS:
+            if keyword in scene_lower:
+                return dict(heuristic)
+        return None
+
+    @classmethod
+    def _normalize_layer_type(cls, sound_type):
+        """Normalize common semantic/contract aliases to registry type names."""
+        if sound_type is None:
+            return None
+        normalized = re.sub(r"[\s-]+", "_", str(sound_type).strip().lower())
+        aliases = {
+            "roomtone": "room_tone",
+            "room_ambience": "room_tone",
+            "indoor_roomtone": "room_tone",
+            "clock": "clock_tick",
+            "clocktick": "clock_tick",
+        }
+        return aliases.get(normalized, normalized)
+
+    @classmethod
+    def _clean_layer(cls, layer, require_type=True):
+        """Remove semantic control metadata before events reach generators."""
+        if not isinstance(layer, dict) or layer.get("enabled") is False:
+            return None
+
+        cleaned = {
+            key: value
+            for key, value in layer.items()
+            if key not in cls.LAYER_CONTROL_FIELDS
+        }
+        if "type" in layer:
+            cleaned["type"] = cls._normalize_layer_type(layer.get("type"))
+
+        if require_type and not cleaned.get("type"):
+            return None
+        return cleaned
+
+    @classmethod
+    def _coerce_config_layers(cls, raw_layers):
+        """Accept a list of layers or a name-keyed layer object."""
+        if isinstance(raw_layers, list):
+            return raw_layers
+        if isinstance(raw_layers, dict):
+            if "type" in raw_layers:
+                return [raw_layers]
+            layers = []
+            for name, value in raw_layers.items():
+                if not isinstance(value, dict):
+                    continue
+                layer = dict(value)
+                layer.setdefault("type", name)
+                layers.append(layer)
+            return layers
+        return []
+
+    @classmethod
+    def _put_layer(cls, layers, layer, start, end):
+        """Sanitize and merge a layer into a type-keyed scene bed."""
+        cleaned = cls._clean_layer(layer)
+        if not cleaned:
+            return
+        cleaned["start"] = start
+        cleaned["end"] = end
+        sound_type = cleaned["type"]
+        if sound_type in layers:
+            layers[sound_type].update(cleaned)
+        else:
+            layers[sound_type] = cleaned
+
+    @classmethod
+    def _contract_anchor_type(cls, anchor):
+        """Map a looped scene-contract audio anchor to a procedural type."""
+        if not isinstance(anchor, dict) or anchor.get("loop") is not True:
+            return None
+
+        kind = str(anchor.get("kind", "")).strip().lower()
+        anchor_id = str(anchor.get("id", "")).strip().lower()
+        semantic = str(anchor.get("semantic", "")).strip().lower()
+        normalized_kind = re.sub(r"[\s_-]+", "", kind)
+        searchable = f"{kind} {anchor_id} {semantic}"
+
+        if normalized_kind in {"roomtone", "roomambience", "ambience"}:
+            return "room_tone"
+        if (
+            "roomtone" in searchable.replace(" ", "")
+            or "room tone" in searchable
+            or "indoor ambience" in searchable
+            or "enclosed" in searchable
+            or "室内底噪" in searchable
+        ):
+            return "room_tone"
+
+        if normalized_kind in {"clocktick", "clock"}:
+            return "clock_tick"
+        if (
+            ("clock" in searchable and ("tick" in searchable or "tock" in searchable))
+            or "时钟" in searchable
+            or "钟表" in searchable
+            or "滴答" in searchable
+        ):
+            return "clock_tick"
+        return None
+
+    @classmethod
+    def _contract_layers_by_scene(cls, scene_contract):
+        """Extract looped room/clock semantic layers from scene audio anchors."""
+        result = {}
+        if not isinstance(scene_contract, dict):
+            return result
+
+        for scene in scene_contract.get("scenes", []):
+            if not isinstance(scene, dict):
+                continue
+            scene_name = (
+                scene.get("registryName")
+                or scene.get("name")
+                or scene.get("implementation", {}).get("name")
+            )
+            if not scene_name:
+                continue
+
+            layers = []
+            for anchor in scene.get("audioAnchors", []):
+                sound_type = cls._contract_anchor_type(anchor)
+                if not sound_type:
+                    continue
+                layer = dict(cls.CONTRACT_LAYER_DEFAULTS[sound_type])
+                for key in ("volume", "intensity", "density"):
+                    if key in anchor:
+                        layer[key] = anchor[key]
+                layers.append(layer)
+
+            if layers:
+                result[scene_name] = layers
+        return result
 
     def _collect_modifiers(self, dialogue):
         """Aggregate keyword modifiers from dialogue text."""
@@ -478,6 +672,19 @@ def load_config(episode_dir):
     return {}
 
 
+def load_scene_contract(episode_dir):
+    """Load optional scene semantic metadata from config/scene_contract.json."""
+    path = os.path.join(episode_dir, "config", "scene_contract.json")
+    if not os.path.exists(path):
+        return {}
+    try:
+        with open(path, "r", encoding="utf-8") as f:
+            return json.load(f)
+    except (OSError, json.JSONDecodeError) as exc:
+        print(f"[SemanticAmbient] Failed to load scene contract: {exc}")
+        return {}
+
+
 def analyze_story(episode_dir, story_text=None, total_duration=None):
     """
     Convenience entry point used by generate_audio.py.
@@ -491,13 +698,14 @@ def analyze_story(episode_dir, story_text=None, total_duration=None):
         List of ambient event dicts.
     """
     config = load_config(episode_dir)
+    scene_contract = load_scene_contract(episode_dir)
     if story_text is None:
         story_path = os.path.join(episode_dir, "script.story")
         if not os.path.exists(story_path):
             return []
         with open(story_path, "r", encoding="utf-8") as f:
             story_text = f.read()
-    analyzer = SemanticAmbientAnalyzer(config)
+    analyzer = SemanticAmbientAnalyzer(config, scene_contract=scene_contract)
     return analyzer.analyze(story_text, total_duration=total_duration)
 
 

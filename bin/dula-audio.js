@@ -14,6 +14,7 @@
  *   npx dula-audio .
  *   npx dula-audio . --provider=elevenlabs
  *   npx dula-audio . --provider=f5-tts --device cpu
+ *   npx dula-audio . --provider=f5-tts --force
  */
 import { spawn, spawnSync } from 'child_process';
 import path from 'path';
@@ -24,6 +25,7 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url));
 // Parse arguments
 let EPISODE = '.';
 let provider = 'edge';
+let force = false;
 const extraArgs = [];
 
 for (let i = 2; i < process.argv.length; i++) {
@@ -40,6 +42,8 @@ for (let i = 2; i < process.argv.length; i++) {
     arg === '-c'
   ) {
     extraArgs.push(arg, process.argv[++i]);
+  } else if (arg === '--force') {
+    force = true;
   } else if (
     arg === '--use-sox' ||
     arg === '--no-sox'
@@ -63,6 +67,13 @@ if (!scriptName) {
   console.error(`[dula-audio] Unknown provider: ${provider}`);
   console.error(`[dula-audio] Available: edge, elevenlabs, dashscope, f5-tts`);
   process.exit(1);
+}
+if (force) {
+  if (provider === 'edge' || provider === 'f5-tts') {
+    extraArgs.push('--force');
+  } else {
+    console.warn(`[dula-audio] --force is not supported by provider '${provider}', ignoring it.`);
+  }
 }
 
 const pyPath = path.resolve(__dirname, '..', 'tools', scriptName);

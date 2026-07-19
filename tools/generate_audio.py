@@ -1063,7 +1063,7 @@ def check_bgm_files(cues):
     return len(missing) == 0
 
 
-def mix_bgm_track(cues, entries, duration, sample_rate=48000):
+def mix_bgm_track(cues, entries, duration, sample_rate=48000, use_ducking=True):
     """
     将多个 BGM cue 混合成一条总线，自动应用：
     - Fade In/Out（正弦曲线）
@@ -1074,16 +1074,17 @@ def mix_bgm_track(cues, entries, duration, sample_rate=48000):
 
     # Build duck events from dialogue entries
     duck_events = []
-    for entry in entries:
-        if entry.get("character") and entry.get("dialogue"):
-            padding = 0.25
-            duck_events.append({
-                "startTime": max(0, entry["startTime"] - padding),
-                "endTime": entry["endTime"] + padding,
-                "depth": 0.55,
-                "attack": 0.12,
-                "release": 0.35,
-            })
+    if use_ducking:
+        for entry in entries:
+            if entry.get("character") and entry.get("dialogue"):
+                padding = 0.25
+                duck_events.append({
+                    "startTime": max(0, entry["startTime"] - padding),
+                    "endTime": entry["endTime"] + padding,
+                    "depth": 0.55,
+                    "attack": 0.12,
+                    "release": 0.35,
+                })
     # Merge overlapping duck events
     if duck_events:
         duck_events.sort(key=lambda x: x["startTime"])
@@ -1137,7 +1138,21 @@ def mix_bgm_track(cues, entries, duration, sample_rate=48000):
         fade_out = cue.get("fadeOut", 1.0)
         base_vol = cue.get("baseVolume", 0.5)
 
-        for i, s in enumerate(samples):
+        if not samples:
+            print(f"Warning: BGM file has no samples: {file_path}")
+            continue
+
+        cue_sample_count = max(
+            0,
+            min(
+                n - start_sample,
+                int(math.ceil(max(0.0, end_time - cue["startTime"]) * sample_rate)),
+            ),
+        )
+        for i in range(cue_sample_count):
+            # BGM cues are loopable beds. Repeat short source files so a
+            # semantic cue cannot fall silent before its declared endTime.
+            s = samples[i % len(samples)]
             idx = start_sample + i
             if idx >= n:
                 break
@@ -1426,6 +1441,21 @@ async def generate(force_tts=False):
     # Collect SFX and BGM events from voice_config and story tags
     sfx_events = []
     bgm_cues = load_music_cues_manifest()
+    manifest["semanticAudio"] = {
+        "toneDirector": {
+            "source": "tone_manifest.json" if tone_manifest else None,
+            "entryCount": len(tone_manifest),
+        },
+        "musicDirector": {
+            "source": "music_cues.json" if bgm_cues else None,
+            "cueCount": len(bgm_cues),
+        },
+        "ambientDirector": {
+            "source": "scene_contract.json+ambient_config.json" if ambient_events else None,
+            "eventCount": len(ambient_events),
+            "events": ambient_events,
+        },
+    }
 
     for entry in entries:
         char = entry["character"]
@@ -1486,15 +1516,23 @@ async def generate(force_tts=False):
         
         # ── NEW: Merge ToneDirector parameters from manifest ──
         tone_entry = tone_manifest.get(entry["index"])
+        if (
+            tone_entry
+            and tone_entry.get("text")
+            and tone_entry["text"].strip() != dialogue.strip()
+        ):
+            print(
+                f"  [ToneDirector] Ignoring stale tone entry {entry['index']}: "
+                f"manifest text does not match script.story."
+            )
+            tone_entry = None
         if tone_entry and tone_entry.get("ttsParams"):
             tts = tone_entry["ttsParams"]
-            # Convert semantic pitch to edge-tts format
+            # Convert semantic semitone offsets to the Hz format accepted by
+            # edge-tts.  Passing values such as "+3st" is not supported.
             if "pitch" in tts:
                 semitones = tts["pitch"]
-                if semitones == 0:
-                    params["pitch"] = "+0Hz"
-                else:
-                    params["pitch"] = f"{semitones:+d}st" if abs(semitones) <= 5 else f"{semitones * 6:+d}Hz"
+                params["pitch"] = f"{round(float(semitones) * 6):+d}Hz"
             # Convert speed to rate
             if "speed" in tts:
                 speed = tts["speed"]
@@ -1576,6 +1614,7 @@ async def generate(force_tts=False):
                 "emotion": emotion or None,
                 "tone": tone_entry.get("toneId") if tone_entry else None,
                 "toneConfidence": tone_entry.get("confidence") if tone_entry else None,
+                "semanticVoice": tone_entry.get("ttsParams") if tone_entry else None,
             }
         )
 
@@ -1634,7 +1673,15 @@ async def generate(force_tts=False):
 
     # Check BGM files and mix if available
     bgm_path = None
-    all_bgm_cues = music_cues + bgm_cues
+    # A semantic scoring manifest is the authored source of truth when present.
+    # Explicit story cues remain a backwards-compatible fallback, but mixing
+    # both buses would double the score across the same timeline.
+    all_bgm_cues = bgm_cues if bgm_cues else music_cues
+    if bgm_cues and music_cues:
+        print(
+            f"[MusicDirector] Semantic BGM manifest overrides "
+            f"{len(music_cues)} explicit story cue(s)."
+        )
     if all_bgm_cues:
         max_time = max(e["endTime"] for e in entries) if entries else 70.0
         cues = []
@@ -1662,7 +1709,22 @@ async def generate(force_tts=False):
                     "baseVolume": opts.get("baseVolume", 0.5),
                 })
         check_bgm_files(cues)
-        bgm_path = mix_bgm_track(cues, entries, max_time + 1.0)
+        use_bgm_ducking = True
+        audio_mix_path = os.path.join(EPISODE, "config", "audio_mix.json")
+        if os.path.exists(audio_mix_path):
+            try:
+                with open(audio_mix_path, "r", encoding="utf-8") as f:
+                    use_bgm_ducking = bool(json.load(f).get("useDucking", True))
+            except Exception as e:
+                print(f"[MusicDirector] Failed to read audio_mix.json ducking option: {e}")
+        if not use_bgm_ducking:
+            print("[MusicDirector] Dialogue ducking disabled by audio_mix.json.")
+        bgm_path = mix_bgm_track(
+            cues,
+            entries,
+            max_time + 1.0,
+            use_ducking=use_bgm_ducking,
+        )
 
     # Build SFX event list: manual scheduled + procedural fallback + voice_config SFX
     all_sfx_events = list(sfx_events)

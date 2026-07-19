@@ -97,6 +97,13 @@ server.listen(PORT, async () => {
     args: ['--no-sandbox', '--disable-setuid-sandbox', '--autoplay-policy=no-user-gesture-required'],
   });
   const page = await browser.newPage();
+  await page.exposeFunction('__dulaExportToneManifest', (manifest) => {
+    const audioDir = path.join(EPISODE_DIR, 'assets', 'audio');
+    const outputPath = path.join(audioDir, 'tone_manifest.json');
+    fs.mkdirSync(audioDir, { recursive: true });
+    fs.writeFileSync(outputPath, JSON.stringify(manifest, null, 2), 'utf-8');
+    console.log(`[ToneDirector] Tone manifest saved: ${outputPath}`);
+  });
   page.on('console', (msg) => console.log('PAGE LOG:', msg.text()));
   page.on('pageerror', (err) => console.error('PAGE ERROR:', err.message));
 

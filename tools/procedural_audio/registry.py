@@ -9,6 +9,22 @@ from . import generators
 
 
 REGISTRY = {
+    # General ambience
+    "room_tone": {
+        "category": "ambient",
+        "params": ["duration", "intensity", "volume"],
+        "defaults": {"intensity": 0.35},
+        "description": "室内底噪：市电嗡鸣、家电谐波与轻微空气流动",
+        "generator": generators.room_tone,
+    },
+    "clock_tick": {
+        "category": "ambient",
+        "params": ["duration", "intensity", "density", "volume"],
+        "defaults": {"intensity": 0.5, "density": 1.0},
+        "description": "循环挂钟滴答；density 控制每秒滴答次数",
+        "generator": generators.clock_tick,
+    },
+
     # Combat
     "gunfight": {
         "category": "combat",

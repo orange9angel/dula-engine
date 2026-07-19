@@ -550,35 +550,54 @@ export class Storyboard {
       // 把 {Voice:xxx} 情绪名映射到 ToneDirector 的 tone id
       const VOICE_TO_TONE_ID = {
         calm: 'neutral',
+        proud: 'contempt',
+        curious: 'surprise',
+        teasing: 'tease',
         worried: 'fear',
         angry: 'angry',
         excited: 'joyful',
         sad: 'sad',
       };
       const explicitTone = entry.tone || VOICE_TO_TONE_ID[entry.voiceEmotion] || entry.voiceEmotion;
-      const toneResult = this.toneDirector.analyze(entry.dialogue, {
-        scene: sceneCursor,
+      let toneResult = this.toneDirector.analyze(entry.dialogue, {
+        scene: this.currentScene?.toneContext || sceneCursor,
         explicitTone,
         precedingAction: entry.precedingAction,
         characterState: entry.characterState,
       });
+
+      const semanticProfile = char.semanticPerformanceProfile?.[toneResult.toneId];
+      if (semanticProfile) {
+        toneResult = {
+          ...toneResult,
+          emotion: semanticProfile.emotion ?? toneResult.emotion,
+          bodyGesture: {
+            ...(toneResult.bodyGesture || {}),
+            anim: semanticProfile.action ?? toneResult.bodyGesture?.anim ?? null,
+            intensity: semanticProfile.intensity ?? toneResult.bodyGesture?.intensity ?? 0,
+            layer: semanticProfile.layer ?? toneResult.bodyGesture?.layer ?? 'none',
+          },
+        };
+      }
       entry._toneResult = toneResult; // 保存供后续使用
+      entry._toneSceneContext = this.currentScene?.toneContext || sceneCursor;
 
-      // 2. 应用表情到 FacialAnimationSystem
-      this.toneDirector.applyToFacialSystem(char, toneResult);
-
-      // 3. 如果没有显式表情动画，根据 tone 自动播放
+      // 2. Record semantic expression ownership. The expression is applied
+      // during the active dialogue window in update(), not here, so future
+      // dialogue emotions do not leak into the opening frame.
       const hasExplicitFace = (entry.animations || []).some(name =>
         typeof name === 'string' && name.startsWith('Face')
       );
       if (!hasExplicitFace) {
-        const emotion = toneResult.emotion;
-        if (emotion && EMOTION_PRESETS[emotion]) {
-          char.facialSystem.setEmotion(emotion, EMOTION_PRESETS[emotion]);
-        }
+        entry._semanticExpression = toneResult.emotion || null;
+        console.log(
+          `[ToneDirector] Auto expression: ${entry.character} -> ${entry._semanticExpression} `
+          + `(tone=${toneResult.toneId})`
+        );
       }
 
-      // 4. ── NEW: 根据语气自动播放肢体动作 ──
+      // 3. ── NEW: 根据语气自动播放肢体动作 ──
+      entry._semanticAction = null;
       if (toneResult.bodyGesture?.anim) {
         const gesture = toneResult.bodyGesture;
         // 检查是否已有显式身体动画（Face 开头的不算）
@@ -592,6 +611,7 @@ export class Storyboard {
           const chosenAnim = this._chooseCompatibleBodyGesture(char, gesture, toneResult);
           const AnimClass = chosenAnim && AnimationRegistry[chosenAnim];
           if (AnimClass) {
+            entry._semanticAction = chosenAnim;
             const entryDuration = entry.endTime - entry.startTime;
             // 激烈动画缩短播放时间，避免和台词长度不匹配
             const animDuration = gesture.intensity > 0.7
@@ -606,7 +626,7 @@ export class Storyboard {
         }
       }
 
-      // 5. ── NEW: 根据语气和场景风格自动触发夸张效果 ──
+      // 4. ── NEW: 根据语气和场景风格自动触发夸张效果 ──
       // 不再在 setup 阶段立即触发，而是按台词开始时间排期，
       // 避免所有效果在 t=0 时一起泄漏到画面上。
       if (char.exaggerationSystem && toneResult?.tone?.exaggeration?.length > 0) {
@@ -1403,7 +1423,8 @@ export class Storyboard {
   }
 
   /**
-   * Apply time-scheduled story props (currently hat/stonehat attach/detach).
+   * Apply time-scheduled story props (hat/stonehat attach/detach, plus any
+   * character-provided generic prop handlers).
    * Props are triggered once when their entry start time is reached.
    */
   _applyStoryPropsAtTime(t) {
@@ -1416,7 +1437,15 @@ export class Storyboard {
       const char = this.characters.get(p.character);
       if (!char) continue;
 
-      if ((p.type === 'hat' || p.type === 'stonehat') && char.attachStoneHat && char.detachStoneHat) {
+      if (typeof char.attachProp === 'function' && typeof char.detachProp === 'function') {
+        // Generic path: character knows how to attach/detach arbitrary prop types.
+        const action = p.action || 'attach';
+        if (action === 'detach') {
+          char.detachProp(p.type);
+        } else {
+          char.attachProp(p.type);
+        }
+      } else if ((p.type === 'hat' || p.type === 'stonehat') && char.attachStoneHat && char.detachStoneHat) {
         const action = p.action || 'attach';
         if (action === 'detach') {
           char.detachStoneHat();
@@ -1848,14 +1877,32 @@ export class Storyboard {
                 const idx = ev.options.index !== undefined ? parseInt(ev.options.index) : 0;
                 this.currentScene.extinguishZodiacFlame(idx);
               }
-              // Generic scene event: if the scene has a method matching the event name, call it
+              // Generic scene events remain argument-free, but expose their exact
+              // story timing while the handler runs. Episode-local scenes can use
+              // this to derive deterministic animation state during prewarm,
+              // verification seeks, and segmented rendering.
               const sceneMethod = ev.name.charAt(0).toLowerCase() + ev.name.slice(1);
-              if (!handledSceneEvent && typeof this.currentScene[sceneMethod] === 'function') {
-                this.currentScene[sceneMethod]();
-              }
-              // Also try exact match (for methods like summonCourierShip)
-              if (!handledSceneEvent && typeof this.currentScene[ev.name] === 'function') {
-                this.currentScene[ev.name]();
+              const previousEventContext = this.currentScene._storyEventContext;
+              this.currentScene._storyEventContext = {
+                name: ev.name,
+                options: ev.options,
+                startTime: entry.startTime,
+                endTime: entry.endTime,
+                currentTime: t,
+                entryIndex: entry.index,
+              };
+              try {
+                if (!handledSceneEvent && typeof this.currentScene[sceneMethod] === 'function') {
+                  this.currentScene[sceneMethod]();
+                  handledSceneEvent = true;
+                }
+                // Also try exact match (for methods like summonCourierShip).
+                if (!handledSceneEvent && typeof this.currentScene[ev.name] === 'function') {
+                  this.currentScene[ev.name]();
+                  handledSceneEvent = true;
+                }
+              } finally {
+                this.currentScene._storyEventContext = previousEventContext;
               }
               // Hide character
               if (ev.name === 'Hide') {
@@ -2419,6 +2466,7 @@ export class Storyboard {
       pain_grunt:    ['Crouch', 'Block', 'HitStagger'],
       victory_laugh: ['Celebrate', 'Jump', 'WaveHand'],
       taunt:         ['PointForward', 'CrossArms', 'DashForward'],
+      tease:         ['PointForward', 'Shrug', 'CrossArms'],
       happy:         ['WaveHand', 'Jump', 'Celebrate'],
       joyful:        ['Celebrate', 'Jump', 'WaveHand'],
       laugh:         ['Shrug', 'WaveHand', 'Celebrate'],
@@ -2699,6 +2747,10 @@ export class Storyboard {
         emotion: e._toneResult.emotion,
         mouthTension: e._toneResult.mouthTension,
         intensity: e._toneResult.intensity,
+        sceneContext: e._toneSceneContext || null,
+        semanticExpression: e._semanticExpression || null,
+        semanticAction: e._semanticAction || null,
+        requestedBodyGesture: e._toneResult.bodyGesture || null,
       }));
 
     if (toneEntries.length === 0) return;

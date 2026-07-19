@@ -4,6 +4,7 @@ from .vehicles import engine_idle, traffic
 from .nature import wind, rain, birds
 from .mechanical import transform_mechanical, servo, metal_stress
 from .scifi import vault_hum, energy_hum
+from .ambient import room_tone, clock_tick
 
 __all__ = [
     "gunfight",
@@ -23,4 +24,6 @@ __all__ = [
     "metal_stress",
     "vault_hum",
     "energy_hum",
+    "room_tone",
+    "clock_tick",
 ]
