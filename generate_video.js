@@ -83,6 +83,7 @@ const server = http.createServer((req, res) => {
     const candidates = [
       path.join(EPISODE_DIR, 'node_modules', relPath),
       path.join(process.cwd(), 'node_modules', relPath),
+      path.join(__dirname, 'node_modules', relPath),
       path.join(__dirname, '..', 'dula-story', 'node_modules', relPath),
       path.join(__dirname, '..', 'node_modules', relPath),
     ];
@@ -258,6 +259,15 @@ server.listen(PORT, async () => {
 
   page.on('console', (msg) => console.log('PAGE LOG:', msg.text()));
   page.on('pageerror', (err) => console.error('PAGE ERROR:', err.message));
+  page.on('requestfailed', (request) => {
+    const failure = request.failure();
+    console.error(`REQUEST FAILED: ${failure?.errorText || 'unknown'} ${request.url()}`);
+  });
+  page.on('response', (response) => {
+    if (!response.ok()) {
+      console.error(`HTTP ${response.status()}: ${response.url()}`);
+    }
+  });
 
   let renderUrl;
   const cacheBuster = `&_cb=${Date.now()}`;

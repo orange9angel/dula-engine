@@ -50,6 +50,7 @@ export class Storyboard {
     this.audioDestination = audioDestination;
     this.audioBuffers = new Map(); // index -> AudioBuffer
     this.mouthCues = new Map(); // index -> audio-derived mouth cue
+    this.audioSourceOffsets = new Map(); // index -> seconds trimmed before playback/mix
     this.activeSources = [];
     this.startTime = 0;
     this.isPlaying = false;
@@ -218,12 +219,18 @@ export class Storyboard {
         const arrayBuffer = await resp.arrayBuffer();
         const audioBuffer = await this.audioContext.decodeAudioData(arrayBuffer);
         this.audioBuffers.set(item.index, audioBuffer);
-        const mouthCue = generateMouthCue(audioBuffer);
+        const sourceOffset = Math.max(0, Number(item.sourceOffset) || 0);
+        this.audioSourceOffsets.set(item.index, sourceOffset);
+        const mouthCue = generateMouthCue(audioBuffer, {
+          startOffsetSeconds: sourceOffset,
+        });
         if (mouthCue) {
           this.mouthCues.set(item.index, mouthCue);
         }
-        if (item.audioDuration) {
-          this.audioDurations.set(item.index, item.audioDuration);
+        const effectiveDuration = Number(item.effectiveAudioDuration)
+          || Math.max(0.05, Number(item.audioDuration || audioBuffer.duration) - sourceOffset);
+        if (effectiveDuration > 0) {
+          this.audioDurations.set(item.index, effectiveDuration);
         }
       } catch (err) {
         console.error(`Failed to load audio for entry ${item.index}:`, err);
@@ -253,8 +260,10 @@ export class Storyboard {
         }
       }
       // Track the maximum audio end time for total duration calculation
-      if (item.audioDuration && item.startTime !== undefined) {
-        maxAudioEnd = Math.max(maxAudioEnd, item.startTime + item.audioDuration);
+      const effectiveDuration = Number(item.effectiveAudioDuration)
+        || Math.max(0, Number(item.audioDuration || 0) - Number(item.sourceOffset || 0));
+      if (effectiveDuration > 0 && item.startTime !== undefined) {
+        maxAudioEnd = Math.max(maxAudioEnd, item.startTime + effectiveDuration);
       }
     }
     if (scheduleAdjustments > 0) {
@@ -1475,7 +1484,7 @@ export class Storyboard {
           source.buffer = buffer;
           const dest = this.audioDestination || this.audioContext.destination;
           source.connect(dest);
-          source.start(when);
+          source.start(when, this.audioSourceOffsets.get(entry.index) || 0);
           this.activeSources.push(source);
         }
       }
@@ -1646,7 +1655,9 @@ export class Storyboard {
         if (!audioDur || audioDur <= 0) continue;
 
         const speakDuration = Math.max(0.05, audioDur + 0.15);
-        const speechEndTime = Math.max(entry.endTime, entry.startTime + speakDuration);
+        // Speaking and lip-sync end with the effective audio, not the subtitle
+        // window.  Subtitle timing may intentionally include reaction space.
+        const speechEndTime = entry.startTime + speakDuration;
         if (t >= entry.startTime && t <= speechEndTime) {
           activeSpeakers.add(entry.character);
 

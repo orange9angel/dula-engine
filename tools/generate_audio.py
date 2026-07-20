@@ -48,7 +48,9 @@ def schedule_dialogues(entries, story_events=None, min_gap=0.3, action_buffer=0.
         curr = sorted_entries[i]
         
         # 前一条音频的实际结束时间
-        prev_audio_end = prev["startTime"] + prev.get("audioDuration", 2.5)
+        prev_audio_end = prev["startTime"] + prev.get(
+            "effectiveAudioDuration", prev.get("audioDuration", 2.5)
+        )
         # 下一条最早可以开始的时间（基于音频不重叠）
         earliest_start = prev_audio_end + min_gap
         
@@ -220,6 +222,12 @@ STORY_PATH = os.path.join(EPISODE, "script.story")
 OUTPUT_DIR = os.path.join(EPISODE, "assets", "audio")
 MANIFEST_PATH = os.path.join(OUTPUT_DIR, "manifest.json")
 SFX_DIR = os.path.join(OUTPUT_DIR, "sfx")
+
+# The first 200 ms of synthesized dialogue contains encoder/pipeline padding
+# in the current providers. Keep the offset explicit in the manifest so final
+# mixing, preview playback, duration scheduling, and mouth cues share one
+# source-time convention.
+DIALOGUE_SOURCE_OFFSET_SECONDS = 0.2
 
 VOICE_CONFIG_PATH = os.path.join(EPISODE, "config", "voice_config.json")
 CHOREOGRAPHY_PATH = os.path.join(EPISODE, "config", "choreography.json")
@@ -1223,7 +1231,11 @@ def mix_audio(manifest, bgm_path=None, sfx_events=None):
             file_path = os.path.join(OUTPUT_DIR, entry["file"])
             inputs.append(file_path)
             delay_ms = int(round(entry["startTime"] * 1000))
-            filters.append(f"[{i}:a]atrim=start=0.2,adelay={delay_ms}|{delay_ms}[d{i}]")
+            source_offset = float(entry.get("sourceOffset", DIALOGUE_SOURCE_OFFSET_SECONDS))
+            filters.append(
+                f"[{i}:a]atrim=start={source_offset:.6f},"
+                f"adelay={delay_ms}|{delay_ms}[d{i}]"
+            )
 
         amix_inputs = "".join(f"[d{i}]" for i in range(len(entries)))
         n_entries = len(entries)
@@ -1602,6 +1614,10 @@ async def generate(force_tts=False):
             audio_duration = get_mp3_duration(filepath)
             print(f"Generated:{emotion_label} {filename} ({audio_duration:.2f}s)")
 
+        effective_audio_duration = max(
+            0.05,
+            audio_duration - DIALOGUE_SOURCE_OFFSET_SECONDS,
+        )
         manifest["entries"].append(
             {
                 "index": entry["index"],
@@ -1611,6 +1627,8 @@ async def generate(force_tts=False):
                 "dialogue": dialogue,
                 "file": filename,
                 "audioDuration": audio_duration,
+                "sourceOffset": DIALOGUE_SOURCE_OFFSET_SECONDS,
+                "effectiveAudioDuration": effective_audio_duration,
                 "emotion": emotion or None,
                 "tone": tone_entry.get("toneId") if tone_entry else None,
                 "toneConfidence": tone_entry.get("confidence") if tone_entry else None,
