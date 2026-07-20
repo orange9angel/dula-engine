@@ -7,7 +7,7 @@
  *   - BoilSystem: boiling-line redraw jitter ("on twos")
  *   - createHatchTexture: canvas pencil-hatching for hand-shaded fills
  *
- * See docs/skills/character-modeler/references/handdrawn-style.md for the
+ * See dula-skills/character-modeler/references/handdrawn-style.md for the
  * drawing method and parameter recipes.
  */
 export { createStroke, strokeLine, strokeCircle, strokeArc, createHatchTexture, mulberry32 } from './SketchStroke.js';

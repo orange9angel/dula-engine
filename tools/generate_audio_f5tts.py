@@ -25,7 +25,7 @@ ENGINE_DIR = TOOLS_DIR.parent
 def find_f5_skill_script(start_dir: Path) -> Path | None:
     """Search upward from start_dir for the f5-tts-voice skill script."""
     candidate_names = [
-        "docs/skills/f5-tts-voice/scripts/generate_f5_voice.py",
+        "dula-skills/f5-tts-voice/scripts/generate_f5_voice.py",
         ".agents/skills/f5-tts-voice/scripts/generate_f5_voice.py",
         "agents/skills/f5-tts-voice/scripts/generate_f5_voice.py",
     ]
@@ -129,7 +129,7 @@ def main() -> None:
     if not skill_script:
         print(
             "[f5-tts-provider] Error: could not find f5-tts-voice skill script. "
-            "Expected path like <project>/docs/skills/f5-tts-voice/scripts/generate_f5_voice.py",
+            "Expected path like <project>/dula-skills/f5-tts-voice/scripts/generate_f5_voice.py",
             file=sys.stderr,
         )
         sys.exit(1)
