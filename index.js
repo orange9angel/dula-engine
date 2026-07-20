@@ -57,3 +57,6 @@ export { selectLimitPreset, clampAngle, clampJointRotation, HUMANOID_STANDARD, H
 
 // Reusable light effect components
 export { GlowEffect, AuraEffect } from './effects/index.js';
+
+// Hand-drawn (sketch/ink) rendering toolbox
+export { createStroke, strokeLine, strokeCircle, strokeArc, createHatchTexture, sketchify, BoilSystem } from './handdrawn/index.js';

@@ -76,6 +76,11 @@ dula-engine/
 │   └── index.js               # CameraMoveRegistry（空 + registerCameraMove）
 ├── storyboard/
 │   └── Storyboard.js          # 导演核心
+├── handdrawn/
+│   ├── SketchStroke.js        # 手绘笔触（变宽度墨线管、排线纹理）
+│   ├── sketchify.js           # 抖动轮廓壳 + 硬边细节笔触
+│   ├── BoilSystem.js          # 沸腾线（12fps 确定性顶点抖动）
+│   └── index.js               # 手绘工具箱出口
 ├── voices/
 │   ├── index.js               # VoiceRegistry（空 + registerVoice）
 │   └── VoiceBase.js           # 配音基类
